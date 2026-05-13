@@ -115,7 +115,10 @@ fn move_piece_to(board: &mut Board, old: (usize, usize), new: (usize, usize)){
             }
         }
         if p.piece_type == PieceType::Pawn{
-            if (new.0 as i16 - old.0 as i16).abs() == 2{
+            
+            let dy = (new.0 as i16 - old.0 as i16).abs();
+            println!("{dy}");
+            if  dy == 2{
                 p.pawn_doubled_moved = true;
             }
             // check for en passant and for updating doubled moved
@@ -125,7 +128,7 @@ fn move_piece_to(board: &mut Board, old: (usize, usize), new: (usize, usize)){
                 } 
             }
         }
-        board[new.0][new.1] = board[old.0][old.1];
+        board[new.0][new.1] = Some(p);
         board[old.0][old.1] = None;
     }
 }
@@ -166,7 +169,7 @@ fn get_attacked_squares(board: &Board, coord: (usize, usize)) -> Vec<(usize, usi
                 if p.color == Side::White{
 
                     // capturing tiles
-                    if in_bounds(coord.0 as i16 - 1, coord.1 as i16 - 1){
+                    if in_bounds( coord.0 as i16 - 1, coord.1 as i16 - 1){
                         if is_piece(board, (coord.0 - 1, coord.1 - 1)){
                             possible.push((coord.0 as i16 - 1, coord.1 as i16 - 1));
                         }
@@ -193,10 +196,61 @@ fn get_attacked_squares(board: &Board, coord: (usize, usize)) -> Vec<(usize, usi
                                 }        
                             }
                     }
+
+                    // regular moving
+                    if in_bounds(coord.0 as i16 -1, coord.1 as i16){
+                        if board[coord.0 - 1][coord.1].is_none(){
+                            possible.push((coord.0 as i16 - 1, coord.1 as i16));
+                            if in_bounds(coord.0 as i16 - 2, coord.1 as i16){
+                                if board[coord.0 - 2][coord.1].is_none() && !p.has_moved{
+                                    possible.push((coord.0 as i16 - 2, coord.1 as i16));
+                                }
+                            }
+                        }
+                    }
  
 
                 }else{
+                    // capturing tiles
+                    if in_bounds( coord.0 as i16 + 1, coord.1 as i16 - 1){
+                        if is_piece(board, (coord.0 + 1, coord.1 - 1)){
+                            possible.push((coord.0 as i16 + 1, coord.1 as i16 - 1));
+                        }
+                    }
+                    if in_bounds(coord.0 as i16 + 1, coord.1 as i16 + 1){
+                        if is_piece(board, (coord.0 + 1, coord.1 + 1)){
+                            possible.push((coord.0 as i16 + 1, coord.1 as i16 + 1));
+                        }
+                    }
 
+                    
+                    // en passant
+                    if in_bounds(coord.0 as i16, coord.1 as i16 - 1){
+                        if let Some(sp) = board[coord.0][coord.1 - 1]{
+                            if sp.piece_type == PieceType::Pawn && sp.color != p.color && sp.pawn_doubled_moved{
+                                possible.push((coord.0 as i16 + 1, coord.1 as i16 - 1));
+                            }        
+                        }
+                    }
+                    if in_bounds(coord.0 as i16, coord.1 as i16 + 1){
+                            if let Some(sp) = board[coord.0][coord.1 + 1]{
+                                if sp.piece_type == PieceType::Pawn && sp.color != p.color && sp.pawn_doubled_moved{
+                                    possible.push((coord.0 as i16 + 1, coord.1 as i16 + 1));
+                                }        
+                            }
+                    }
+
+                    // regular moving
+                    if in_bounds(coord.0 as i16 + 1, coord.1 as i16){
+                        if board[coord.0 + 1][coord.1].is_none(){
+                            possible.push((coord.0 as i16 + 1, coord.1 as i16));
+                            if in_bounds(coord.0 as i16 + 2, coord.1 as i16){
+                                if board[coord.0 + 2][coord.1].is_none() && !p.has_moved{
+                                    possible.push((coord.0 as i16 + 2, coord.1 as i16));
+                                }
+                            }
+                        }
+                    }
                 }
             },
             PieceType::Queen => {
@@ -211,6 +265,7 @@ fn get_attacked_squares(board: &Board, coord: (usize, usize)) -> Vec<(usize, usi
         // check validity of each move
         for m in possible {
             if in_bounds(m.0, m.1){
+
                 // dont let us take same coloured pieces
                 if let Some(sp) = board[m.0 as usize][m.1 as usize]{
                     if sp.color == p.color{
@@ -221,6 +276,7 @@ fn get_attacked_squares(board: &Board, coord: (usize, usize)) -> Vec<(usize, usi
             }
         }
     }
+
     valid
 }
 
@@ -261,7 +317,7 @@ fn get_valid_moves(board: &Board, coord: (usize, usize) ) -> Vec<(usize, usize)>
                 if p.color == Side::White{
 
                     // capturing tiles
-                    if in_bounds(coord.0 as i16 - 1, coord.1 as i16 - 1){
+                    if in_bounds( coord.0 as i16 - 1, coord.1 as i16 - 1){
                         if is_piece(board, (coord.0 - 1, coord.1 - 1)){
                             possible.push((coord.0 as i16 - 1, coord.1 as i16 - 1));
                         }
@@ -288,10 +344,61 @@ fn get_valid_moves(board: &Board, coord: (usize, usize) ) -> Vec<(usize, usize)>
                                 }        
                             }
                     }
+
+                    // regular moving
+                    if in_bounds(coord.0 as i16 -1, coord.1 as i16){
+                        if board[coord.0 - 1][coord.1].is_none(){
+                            possible.push((coord.0 as i16 - 1, coord.1 as i16));
+                            if in_bounds(coord.0 as i16 - 2, coord.1 as i16){
+                                if board[coord.0 - 2][coord.1].is_none() && !p.has_moved{
+                                    possible.push((coord.0 as i16 - 2, coord.1 as i16));
+                                }
+                            }
+                        }
+                    }
  
 
                 }else{
+                    // capturing tiles
+                    if in_bounds( coord.0 as i16 + 1, coord.1 as i16 - 1){
+                        if is_piece(board, (coord.0 + 1, coord.1 - 1)){
+                            possible.push((coord.0 as i16 + 1, coord.1 as i16 - 1));
+                        }
+                    }
+                    if in_bounds(coord.0 as i16 + 1, coord.1 as i16 + 1){
+                        if is_piece(board, (coord.0 + 1, coord.1 + 1)){
+                            possible.push((coord.0 as i16 + 1, coord.1 as i16 + 1));
+                        }
+                    }
 
+                    
+                    // en passant
+                    if in_bounds(coord.0 as i16, coord.1 as i16 - 1){
+                        if let Some(sp) = board[coord.0][coord.1 - 1]{
+                            if sp.piece_type == PieceType::Pawn && sp.color != p.color && sp.pawn_doubled_moved{
+                                possible.push((coord.0 as i16 + 1, coord.1 as i16 - 1));
+                            }        
+                        }
+                    }
+                    if in_bounds(coord.0 as i16, coord.1 as i16 + 1){
+                            if let Some(sp) = board[coord.0][coord.1 + 1]{
+                                if sp.piece_type == PieceType::Pawn && sp.color != p.color && sp.pawn_doubled_moved{
+                                    possible.push((coord.0 as i16 + 1, coord.1 as i16 + 1));
+                                }        
+                            }
+                    }
+
+                    // regular moving
+                    if in_bounds(coord.0 as i16 + 1, coord.1 as i16){
+                        if board[coord.0 + 1][coord.1].is_none(){
+                            possible.push((coord.0 as i16 + 1, coord.1 as i16));
+                            if in_bounds(coord.0 as i16 + 2, coord.1 as i16){
+                                if board[coord.0 + 2][coord.1].is_none() && !p.has_moved{
+                                    possible.push((coord.0 as i16 + 2, coord.1 as i16));
+                                }
+                            }
+                        }
+                    }
                 }
             },
             PieceType::Queen => {
@@ -405,7 +512,6 @@ async fn main() {
 
     let mut selected_piece: Option<Piece> = None;
     let mut selected_coords: Option<(usize, usize)> = None; 
-    let mut clicked_coords: (usize, usize) = (0,0);
 
     loop {
         
@@ -422,16 +528,15 @@ async fn main() {
                     selected_piece = board[row][col];
                     selected_coords = Some((row, col));
                 }
-                clicked_coords = (row, col);
             }else{
 
-                for possible in get_valid_moves(&board, clicked_coords){
-                    println!("{possible:?}");
-                    if possible == (row, col){
-                        move_piece_to(&mut board, clicked_coords, (row, col));
-                        selected_piece = None;
-                    }
+                if get_valid_moves(&board, selected_coords.unwrap()).contains(&(row, col)){
+                    move_piece_to(&mut board, selected_coords.unwrap(), (row, col));
+                }else{
+                    selected_piece = board[row][col];
+                    selected_coords = Some((row, col));
                 }
+
             }
         }
         if macroquad::input::is_mouse_button_down(MouseButton::Right){
