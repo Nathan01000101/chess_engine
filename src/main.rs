@@ -289,7 +289,22 @@ fn get_valid_moves(board: &Board, coord: (usize, usize) ) -> Vec<(usize, usize)>
     if let Some(p) = piece {
         match p.piece_type{
             PieceType::Bishop => {
+                let dirs: Vec<(i16, i16)> = vec![(-1, 1), (1, 1), (-1, -1), (1, -1)];
 
+                // generate possible moves
+                for dir in dirs{
+                    for i in 1..8{
+                        if in_bounds(coord.0 as i16 + dir.0 * i, coord.1 as i16 + dir.1 * i){
+                            if is_piece(board, ((coord.0 as i16 + dir.0 * i) as usize, (coord.1 as i16 + dir.1 * i) as usize)){
+                                possible.push((coord.0 as i16 + dir.0 * i, coord.1 as i16 + dir.1 * i));
+                                break;
+                            }
+                            possible.push((coord.0 as i16 + dir.0 * i, coord.1 as i16 + dir.1 * i));
+                        }else{
+                            break;
+                        }
+                    }
+                }
             },
             PieceType::Knight => {
                 let dirs: Vec<(i16, i16)> = vec![(-2, 0), (2, 0), (0, -2), (0, 2)];
