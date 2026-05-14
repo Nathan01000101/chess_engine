@@ -37,6 +37,8 @@ struct Piece {
 
 pub type Board = [[Option<Piece>; 8]; 8];
 
+
+
 // board logic
 fn new_board() -> Board {
     let mut board = [[None; 8]; 8];
@@ -757,6 +759,7 @@ fn draw_pieces(board: &Board, font: &Font, tile_size: f32, flipped: bool) {
 #[macroquad::main("Chess Engine")]
 async fn main() {
     let mut board = new_board();
+    let mut moves: i16 = 0;
     let mut current_turn = Side::White;
     let tile_size: f32 = WINDOW_SIZE / 8.0; 
     let font = load_ttf_font("assets/FreeSerif.ttf").await.unwrap();
@@ -779,14 +782,14 @@ async fn main() {
     let mut player1: Box<dyn Player> = match type1.as_str() {
         "human"     => Box::new(HumanPlayer),
         "random"    => Box::new(RandomAI),
-        "minimax"   => Box::new(MinimaxAI {depth: 4}),
+        "minimax"   => Box::new(MinimaxAI {depth: 5}),
         _           => panic!("unknown player type: {type1}")
     };
 
     let mut player2: Box<dyn Player> = match type2.as_str() {
         "human"     => Box::new(HumanPlayer),
         "random"    => Box::new(RandomAI),
-        "minimax"   => Box::new(MinimaxAI {depth: 4}),
+        "minimax"   => Box::new(MinimaxAI {depth: 5}),
         _           => panic!("unknown player type: {type2}")
     };
     
