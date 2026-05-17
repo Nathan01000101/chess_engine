@@ -2,6 +2,7 @@ use macroquad::{ prelude::*};
 use macroquad::miniquad::date;
 use crate::ai::Player;
 use crate::human::HumanPlayer;
+use crate::minimax_ai_multithread::MinimaxMTAI;
 use crate::random_ai::RandomAI;
 use crate::minimax_ai::MinimaxAI;
 use std::collections::HashSet;
@@ -13,6 +14,7 @@ mod ai;
 mod human;
 mod random_ai;
 mod minimax_ai;
+mod minimax_ai_multithread;
 
 const WINDOW_SIZE: f32 = 600.0;
 const GAMES: u8 = 16;
@@ -118,29 +120,21 @@ fn is_in_check(board: &Board, side: Side) -> bool{
 
 // determines if a given square is attacked by a given side
 fn is_square_attacked_by(board: &Board, coords: (usize, usize), side: Side) -> bool{
-    let mut opposing_pieces: HashSet<(usize, usize)> = HashSet::new();
-    let mut attacked_squares: HashSet<(usize, usize)> = HashSet::new(); 
-
-    //find opposing pieces
+    //check all pieces
     for i in 0..64{
         let c: usize = i % 8;
         let r: usize = i / 8;
         
         if let Some(p) = board[r][c]{
             if p.color == side{
-                opposing_pieces.insert((r, c));
+                for mv in get_attacked_squares(board, (r, c)){
+                    if mv == coords {return true}
+                }
+                
             }
         }
     }
-
-    // get all valid moves from all opposing pieces
-    for piece in opposing_pieces{
-        for valid in get_attacked_squares(board, piece){
-            attacked_squares.insert(valid);
-        }
-    }
-
-    attacked_squares.contains(&coords)
+    false
 }
 
 fn move_piece_to(board: &mut Board, old: (usize, usize), new: (usize, usize)){
@@ -402,269 +396,74 @@ fn get_attacked_squares(board: &Board, coord: (usize, usize)) -> Vec<(usize, usi
 }
 
 
-fn get_valid_moves(board: &Board, coord: (usize, usize) ) -> Vec<(usize, usize)> {
-    let mut possible: Vec<(i16, i16)> = Vec::new();
-    let mut valid: Vec<(usize, usize)> = Vec::new();
-    let piece: Option<Piece> = board[coord.0][coord.1];
+fn get_valid_moves(board: &mut Board, coord: (usize, usize) ) -> Vec<(usize, usize)> {
+    if board[coord.0][coord.1].is_none() {return Vec::new()}
+    let piece = board[coord.0][coord.1].unwrap();
+    let mut not_checked: Vec<(usize, usize)> = get_attacked_squares(&board, coord);
+    let mut checked: Vec<(usize, usize)> = Vec::new();
 
-    if let Some(p) = piece {
-        match p.piece_type{
-            PieceType::Bishop => {
-                let dirs: Vec<(i16, i16)> = vec![(-1, 1), (1, 1), (-1, -1), (1, -1)];
-
-                // generate possible moves
-                for dir in dirs{
-                    for i in 1..8{
-                        if in_bounds(coord.0 as i16 + dir.0 * i, coord.1 as i16 + dir.1 * i){
-                            if is_piece(board, ((coord.0 as i16 + dir.0 * i) as usize, (coord.1 as i16 + dir.1 * i) as usize)){
-                                possible.push((coord.0 as i16 + dir.0 * i, coord.1 as i16 + dir.1 * i));
-                                break;
+    // add castling move if neccesary
+    if piece.piece_type == PieceType::King{
+            // castling - belongs HERE, not in get_attacked_squares
+        if !piece.has_moved {
+            let opposite_side = if piece.color == Side::White { Side::Black } else { Side::White };
+            // queenside
+            if let Some(sp) = board[coord.0][0] {
+                if sp.piece_type == PieceType::Rook && !sp.has_moved {
+                    if board[coord.0][1].is_none() && board[coord.0][2].is_none() && board[coord.0][3].is_none() {
+                        if !is_square_attacked_by(board, (coord.0, 1), opposite_side) 
+                            && !is_square_attacked_by(board, (coord.0, 2), opposite_side) 
+                            && !is_square_attacked_by(board, (coord.0, 3), opposite_side) {
+                            if !is_in_check(board, piece.color) {
+                                not_checked.push((coord.0, 2));
                             }
-                            possible.push((coord.0 as i16 + dir.0 * i, coord.1 as i16 + dir.1 * i));
-                        }else{
-                            break;
-                        }
-                    }
-                }
-            },
-            PieceType::Knight => {
-                let dirs: Vec<(i16, i16)> = vec![(-2, 0), (2, 0), (0, -2), (0, 2)];
-
-                // generate possible moves
-                for dir in dirs{
-                    if dir.0 == 0 {
-                        possible.push(((coord.0 as i16 - 1), (dir.1 + coord.1 as i16)));
-                        possible.push(((coord.0 as i16 + 1), (dir.1 + coord.1 as i16)));
-                    }else{
-                        possible.push(((coord.0 as i16 + dir.0), (coord.1 as i16 - 1)));
-                        possible.push(((coord.0 as i16+ dir.0), (coord.1 as i16 + 1)));
-                    }
-                }
-            },
-            PieceType::King => {
-                for dx in -1..2{
-                    for dy in -1..2{
-                        if dx == 0 && dy == 0 {continue;}
-                        possible.push((coord.0 as i16 + dy, coord.1 as i16 + dx))
-                    }
-                }
-
-                // castling
-                // conditions:
-                // 1. king and rook must not've moved yet
-                // 2. space between king and rook must be free
-                // 3. tiles between king and rook must not be attacked
-                // 4. king must not be in check before or after castle
-                if !p.has_moved{
-                    let opposite_side = if p.color == Side::White { Side::Black}else {Side::White};
-                    //queen side
-                    if let Some(sp) = board[coord.0][0]{
-                        if sp.piece_type == PieceType::Rook {
-                            if !sp.has_moved{
-                                // at this point, condition 1 is satisfied
-                                if board[coord.0][1].is_none() && board[coord.0][2].is_none() && board[coord.0][3].is_none(){
-                                    // at this point condition 2 is satisfied
-                                    if !is_square_attacked_by(board, (coord.0, 1), opposite_side) && !is_square_attacked_by(board, (coord.0, 2), opposite_side) && !is_square_attacked_by(board, (coord.0, 3), opposite_side){
-                                        // at this point condition 3 is satisfied
-                                        if !is_in_check(board, p.color){
-                                            // at this point all conditions should be satisfied
-                                            possible.push((coord.0 as i16, 2));
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    //king side
-                    if let Some(sp) = board[coord.0][7]{
-                        if sp.piece_type == PieceType::Rook {
-                            if !sp.has_moved{
-                                // at this point, condition 1 is satisfied
-                                if board[coord.0][6].is_none() && board[coord.0][5].is_none() {
-                                    // at this point condition 2 is satisfied
-                                    if !is_square_attacked_by(board, (coord.0, 6), opposite_side) && !is_square_attacked_by(board, (coord.0, 5), opposite_side){
-                                        // at this point condition 3 is satisfied
-                                        if !is_in_check(board, p.color){
-                                            // at this point all conditions should be satisfied
-                                            possible.push((coord.0 as i16, 6));
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-            },
-            PieceType::Pawn => {
-                if p.color == Side::White{
-
-                    // capturing tiles
-                    if in_bounds( coord.0 as i16 - 1, coord.1 as i16 - 1){
-                        if is_piece(board, (coord.0 - 1, coord.1 - 1)){
-                            possible.push((coord.0 as i16 - 1, coord.1 as i16 - 1));
-                        }
-                    }
-                    if in_bounds(coord.0 as i16 - 1, coord.1 as i16 + 1){
-                        if is_piece(board, (coord.0 - 1, coord.1 + 1)){
-                            possible.push((coord.0 as i16 - 1, coord.1 as i16 + 1));
-                        }
-                    }
-
-                    
-                    // en passant
-                    if in_bounds(coord.0 as i16, coord.1 as i16 - 1){
-                        if let Some(sp) = board[coord.0][coord.1 - 1]{
-                            if sp.piece_type == PieceType::Pawn && sp.color != p.color && sp.pawn_doubled_moved{
-                                possible.push((coord.0 as i16 - 1, coord.1 as i16 - 1));
-                            }        
-                        }
-                    }
-                    if in_bounds(coord.0 as i16, coord.1 as i16 + 1){
-                            if let Some(sp) = board[coord.0][coord.1 + 1]{
-                                if sp.piece_type == PieceType::Pawn && sp.color != p.color && sp.pawn_doubled_moved{
-                                    possible.push((coord.0 as i16 - 1, coord.1 as i16 + 1));
-                                }        
-                            }
-                    }
-
-                    // regular moving
-                    if in_bounds(coord.0 as i16 -1, coord.1 as i16){
-                        if board[coord.0 - 1][coord.1].is_none(){
-                            possible.push((coord.0 as i16 - 1, coord.1 as i16));
-                            if in_bounds(coord.0 as i16 - 2, coord.1 as i16){
-                                if board[coord.0 - 2][coord.1].is_none() && !p.has_moved{
-                                    possible.push((coord.0 as i16 - 2, coord.1 as i16));
-                                }
-                            }
-                        }
-                    }
- 
-
-                }else{
-                    // capturing tiles
-                    if in_bounds( coord.0 as i16 + 1, coord.1 as i16 - 1){
-                        if is_piece(board, (coord.0 + 1, coord.1 - 1)){
-                            possible.push((coord.0 as i16 + 1, coord.1 as i16 - 1));
-                        }
-                    }
-                    if in_bounds(coord.0 as i16 + 1, coord.1 as i16 + 1){
-                        if is_piece(board, (coord.0 + 1, coord.1 + 1)){
-                            possible.push((coord.0 as i16 + 1, coord.1 as i16 + 1));
-                        }
-                    }
-
-                    
-                    // en passant
-                    if in_bounds(coord.0 as i16, coord.1 as i16 - 1){
-                        if let Some(sp) = board[coord.0][coord.1 - 1]{
-                            if sp.piece_type == PieceType::Pawn && sp.color != p.color && sp.pawn_doubled_moved{
-                                possible.push((coord.0 as i16 + 1, coord.1 as i16 - 1));
-                            }        
-                        }
-                    }
-                    if in_bounds(coord.0 as i16, coord.1 as i16 + 1){
-                            if let Some(sp) = board[coord.0][coord.1 + 1]{
-                                if sp.piece_type == PieceType::Pawn && sp.color != p.color && sp.pawn_doubled_moved{
-                                    possible.push((coord.0 as i16 + 1, coord.1 as i16 + 1));
-                                }        
-                            }
-                    }
-
-                    // regular moving
-                    if in_bounds(coord.0 as i16 + 1, coord.1 as i16){
-                        if board[coord.0 + 1][coord.1].is_none(){
-                            possible.push((coord.0 as i16 + 1, coord.1 as i16));
-                            if in_bounds(coord.0 as i16 + 2, coord.1 as i16){
-                                if board[coord.0 + 2][coord.1].is_none() && !p.has_moved{
-                                    possible.push((coord.0 as i16 + 2, coord.1 as i16));
-                                }
-                            }
-                        }
-                    }
-                }
-            },
-            PieceType::Queen => {
-                let mut dirs: Vec<(i16, i16)> = vec![(-1, 0), (1, 0), (0, -1), (0, 1)];
-
-                // generate possible moves
-                for dir in dirs{
-                    for i in 1..8{
-                        if in_bounds(coord.0 as i16 + dir.0 * i, coord.1 as i16 + dir.1 * i){
-                            if is_piece(board, ((coord.0 as i16 + dir.0 * i) as usize, (coord.1 as i16 + dir.1 * i) as usize)){
-                                possible.push((coord.0 as i16 + dir.0 * i, coord.1 as i16 + dir.1 * i));
-                                break;
-                            }
-                            possible.push((coord.0 as i16 + dir.0 * i, coord.1 as i16 + dir.1 * i));
-                        }else{
-                            break;
-                        }
-                    }
-                }
-
-                dirs = vec![(-1, 1), (1, 1), (-1, -1), (1, -1)];
-
-                // generate possible moves
-                for dir in dirs{
-                    for i in 1..8{
-                        if in_bounds(coord.0 as i16 + dir.0 * i, coord.1 as i16 + dir.1 * i){
-                            if is_piece(board, ((coord.0 as i16 + dir.0 * i) as usize, (coord.1 as i16 + dir.1 * i) as usize)){
-                                possible.push((coord.0 as i16 + dir.0 * i, coord.1 as i16 + dir.1 * i));
-                                break;
-                            }
-                            possible.push((coord.0 as i16 + dir.0 * i, coord.1 as i16 + dir.1 * i));
-                        }else{
-                            break;
                         }
                     }
                 }
             }
-            PieceType::Rook => {
-                let dirs: Vec<(i16, i16)> = vec![(-1, 0), (1, 0), (0, -1), (0, 1)];
-
-                // generate possible moves
-                for dir in dirs{
-                    for i in 1..8{
-                        if in_bounds(coord.0 as i16 + dir.0 * i, coord.1 as i16 + dir.1 * i){
-                            if is_piece(board, ((coord.0 as i16 + dir.0 * i) as usize, (coord.1 as i16 + dir.1 * i) as usize)){
-                                possible.push((coord.0 as i16 + dir.0 * i, coord.1 as i16 + dir.1 * i));
-                                break;
+            // kingside
+            if let Some(sp) = board[coord.0][7] {
+                if sp.piece_type == PieceType::Rook && !sp.has_moved {
+                    if board[coord.0][6].is_none() && board[coord.0][5].is_none() {
+                        if !is_square_attacked_by(board, (coord.0, 6), opposite_side) 
+                            && !is_square_attacked_by(board, (coord.0, 5), opposite_side) {
+                            if !is_in_check(board, piece.color) {
+                                not_checked.push((coord.0, 6));
                             }
-                            possible.push((coord.0 as i16 + dir.0 * i, coord.1 as i16 + dir.1 * i));
-                        }else{
-                            break;
                         }
                     }
                 }
-            }
-
-        }
-
-        // check validity of each move
-        for m in possible {
-            if in_bounds(m.0, m.1){
-
-                // dont let us take same coloured pieces
-                if let Some(sp) = board[m.0 as usize][m.1 as usize]{
-                    if sp.color == p.color{
-                        continue;
-                    }
-                }
-
-                // dont let king be in check
-                let mut potential_board: Board = board.clone();
-                move_piece_to(&mut potential_board, coord, (m.0 as usize, m.1 as usize));
-                if is_in_check(&potential_board, p.color){
-                    continue;
-                }
-
-                valid.push((m.0 as usize, m.1 as usize));
             }
         }
     }
 
-    valid
+
+    // check validity of each move
+    for m in not_checked {
+        // dont let us take same coloured pieces
+        if let Some(sp) = board[m.0 as usize][m.1 as usize]{
+            if sp.color == board[coord.0][coord.1].unwrap().color{
+                continue;
+            }
+        }
+
+        // dont let king be in check
+        let back = board[coord.0][coord.1];
+
+
+        move_piece_to(&mut board, coord, (m.0 , m.1 ));
+        if is_in_check(&board, board[coord.0][coord.1].unwrap().color){
+            continue;
+        }
+        move_piece_to(&mut board, (m.0, m.1), coord);
+        board[m.0][m.1] = back;
+        checked.push((m.0 as usize, m.1 as usize));
+        
+    }
+    checked
 }
+
+
 
 // gets all moves that a side can make
 fn get_all_moves(board: &Board, side: Side) -> Vec<((usize, usize), (usize, usize))>{
@@ -703,7 +502,7 @@ fn draw_moves(tile_size: f32, board: &Board, selected_piece: (usize, usize), fli
     let color = Color::from_rgba(100, 0, 0, 100);
     for mv in moves {
         if flipped{
-            draw_circle((7 - mv.1) as f32 * tile_size + tile_size*0.5, (7 - mv.0) as f32 * tile_size + tile_size * 0.5, tile_size / 2.5, color);
+            draw_circle((mv.1) as f32 * tile_size + tile_size*0.5, ( 7 - mv.0) as f32 * tile_size + tile_size * 0.5, tile_size / 2.5, color);
         }else{
             draw_circle(mv.1 as f32 * tile_size + tile_size*0.5, mv.0 as f32 * tile_size + tile_size*0.5, tile_size/2.5, color);
         }
@@ -733,7 +532,7 @@ fn draw_pieces(board: &Board, font: &Font, tile_size: f32, flipped: bool) {
         for col in 0..8 {
             if let Some(piece) = &board[row][col] {
                 let (draw_col, draw_row) = if flipped {
-                    (7 - col, 7 - row)
+                    (col, 7 - row)
                 } else {
                     (col, row)
                 };
@@ -759,7 +558,6 @@ fn draw_pieces(board: &Board, font: &Font, tile_size: f32, flipped: bool) {
 #[macroquad::main("Chess Engine")]
 async fn main() {
     let mut board = new_board();
-    let mut moves: i16 = 0;
     let mut current_turn = Side::White;
     let tile_size: f32 = WINDOW_SIZE / 8.0; 
     let font = load_ttf_font("assets/FreeSerif.ttf").await.unwrap();
@@ -778,27 +576,27 @@ async fn main() {
     let type1 = args.get(1).unwrap_or(&default_white);
     let type2 = args.get(2).unwrap_or(&default_black);
 
+    //let depth = args.get(3).map(String::as_str) == Some();
+
     // make sure player1 and player2 are correct options
-    let mut player1: Box<dyn Player> = match type1.as_str() {
+    let player1: Box<dyn Player> = match type1.as_str() {
         "human"     => Box::new(HumanPlayer),
         "random"    => Box::new(RandomAI),
         "minimax"   => Box::new(MinimaxAI {depth: 5}),
+        "minimaxmt" => Box::new(MinimaxMTAI {depth: 6}),
         _           => panic!("unknown player type: {type1}")
     };
 
-    let mut player2: Box<dyn Player> = match type2.as_str() {
+    let player2: Box<dyn Player> = match type2.as_str() {
         "human"     => Box::new(HumanPlayer),
         "random"    => Box::new(RandomAI),
         "minimax"   => Box::new(MinimaxAI {depth: 5}),
+        "minimaxmt" => Box::new(MinimaxMTAI {depth: 6}),
         _           => panic!("unknown player type: {type2}")
     };
     
     
-    let randomize = args.get(3).map(String::as_str) == Some("true");
-    rand::srand(date::now() as u64);
-    if randomize && rand::gen_range(0, 2) == 1 {
-        std::mem::swap(&mut player1, &mut player2);
-    }
+    
 
     // set screen size
     macroquad::window::request_new_screen_size(WINDOW_SIZE, WINDOW_SIZE);
@@ -810,6 +608,7 @@ async fn main() {
     loop {
         // restart
         if game_over{
+            thread::sleep(Duration::from_secs_f32(5.0));
             board = new_board();
             game_over = false;
             winner = None;
@@ -827,7 +626,7 @@ async fn main() {
                 // get any input
                 if macroquad::input::is_mouse_button_pressed(MouseButton::Left){
                     let col: usize = if board_flipped{
-                        7 - (x / tile_size) as usize
+                         7 - (x / tile_size) as usize
                     }else{
                         (x / tile_size) as usize
                     };
@@ -849,6 +648,7 @@ async fn main() {
                         if get_valid_moves(&board, selected_coords.unwrap()).contains(&(row, col)) && board[selected_coords.unwrap().0][selected_coords.unwrap().1].unwrap().color == current_turn{
                             move_piece_to(&mut board, selected_coords.unwrap(), (row, col));
                             current_turn = if current_turn == Side::White {Side::Black} else {Side::White};
+                            println!("eval: {}",minimax_ai::evaluate(&board));
                             selected_piece = None;
                             selected_coords = None;
                         }else{
@@ -861,6 +661,7 @@ async fn main() {
             }else{
                 let mv: ((usize, usize), (usize, usize)) = player1.get_move(&board, current_turn);
                 move_piece_to(&mut board, mv.0, mv.1);
+                println!("eval: {}",minimax_ai::evaluate(&board));
                 if get_all_moves(&board, Side::Black).len() == 0{
                     if is_in_check(&board, Side::Black){
                         winner = Some(true); // true for white
@@ -881,7 +682,7 @@ async fn main() {
                 // get any input
                 if macroquad::input::is_mouse_button_pressed(MouseButton::Left){
                     let col: usize = if board_flipped{
-                        7 - (x / tile_size) as usize
+                        (x / tile_size) as usize
                     }else{
                         (x / tile_size) as usize
                     };
@@ -901,6 +702,7 @@ async fn main() {
         
                         if get_valid_moves(&board, selected_coords.unwrap()).contains(&(row, col)) && board[selected_coords.unwrap().0][selected_coords.unwrap().1].unwrap().color == current_turn{
                             move_piece_to(&mut board, selected_coords.unwrap(), (row, col));
+                            println!("eval: {}",minimax_ai::evaluate(&board));
                             current_turn = if current_turn == Side::White {Side::Black} else {Side::White};
                             selected_piece = None;
                             selected_coords = None;
@@ -914,6 +716,7 @@ async fn main() {
             }else{
                 let mv: ((usize, usize), (usize, usize)) = player2.get_move(&board, current_turn);
                 move_piece_to(&mut board, mv.0, mv.1);
+                println!("eval: {}",minimax_ai::evaluate(&board));
                 if get_all_moves(&board, Side::White).len() == 0{
                     if is_in_check(&board, Side::White){
                         winner = Some(false); // false for black
@@ -942,7 +745,7 @@ async fn main() {
         }
         draw_pieces(&board, &font, tile_size, board_flipped);
 
-        if (game_over){
+        if game_over{
             if winner.is_some(){
                 if winner.unwrap(){
                     draw_text_ex(
@@ -979,10 +782,9 @@ async fn main() {
                     },
                 );
             }
-            println!("white wins: {}\nblack wins: {}", white_wins, black_wins);
-            thread::sleep(Duration::from_secs_f32(0.5));
+            println!("white wins: {}\nblack wins: {}", white_wins, black_wins);   
         }
-
         next_frame().await;
+
     }
 }

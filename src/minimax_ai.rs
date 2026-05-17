@@ -1,4 +1,5 @@
 use std::any::Any;
+use std::collections::HashMap;
 use crate::Board;
 use crate::PieceType;
 use crate::Piece;
@@ -13,6 +14,11 @@ pub struct MinimaxAI { pub depth: u8}
 impl Player for MinimaxAI {
     fn as_any(&self) -> &dyn Any { self }
     fn get_move(&self, board: &Board, side: Side) -> ((usize, usize), (usize, usize)) {
+
+        //transposition table
+        let mut transposition_table: HashMap<u64, TTEntry> = HashMap::new();
+        let zobrist_table: ZobristTable = ZobristTable::new();
+
         let mut best_move: ((usize, usize), (usize, usize)) = ((0,0), (0,0));
         let mut best_eval: i32 = if side == Side::White {i32::MIN} else {i32::MAX};
 
@@ -23,7 +29,7 @@ impl Player for MinimaxAI {
         for mv in moves{
             let mut new_board = board.clone();
             move_piece_to(&mut new_board, mv.0,mv.1);
-            let eval = minimax(&new_board, self.depth.saturating_sub(1), i32::MIN, i32::MAX, side == Side::Black);
+            let eval = minimax(&new_board, self.depth.saturating_sub(1), i32::MIN, i32::MAX, side == Side::Black, &zobrist_table, &mut transposition_table);
 
             if side == Side::White && eval > best_eval || side == Side::Black && eval < best_eval{
                 best_eval = eval;
@@ -36,52 +42,78 @@ impl Player for MinimaxAI {
                 }
             }
         }
-        println!("{}", best_eval);
         best_move
     }
 }
 
-fn minimax(board: &Board, depth: u8, alpha: i32, beta: i32, maximizing_player: bool) -> i32{
-    if depth == 0 {
-        return evaluate(board);
-    }
+fn minimax(board: &Board, depth: u8, mut alpha: i32, mut beta: i32,
+    maximizing_player: bool, ztable: &ZobristTable,
+    tt: &mut HashMap<u64, TTEntry>) -> i32 {
+let side = if maximizing_player { Side::White } else { Side::Black };
+let hash = ztable.hash(board, side);
+let alpha_orig = alpha;
+let beta_orig = beta;
 
-    if maximizing_player {
-        let mut eval: i32 = i32::MIN;
-        let mut alpha = alpha; 
-
-        // move ordering
-        let mut moves = get_all_moves(board, Side::White);
-        moves.sort_by_key(|mv| { match board[mv.1.0][mv.1.1]{ Some(p) => -piece_value(p, mv.1), None => 0}});
-
-        for mv in moves {
-            let mut new_board = board.clone();
-            move_piece_to(&mut new_board, mv.0, mv.1);
-            eval = minimax(&new_board, depth.saturating_sub(1), alpha, beta, false).max(eval);
-            alpha = alpha.max(eval); // update alpha
-            if eval >= beta { break; }
-        }
-        eval
-    } else {
-        let mut eval: i32 = i32::MAX;
-        let mut beta = beta; 
-
-        // move ordering
-        let mut moves = get_all_moves(board, Side::Black);
-        moves.sort_by_key(|mv| { match board[mv.1.0][mv.1.1]{ Some(p) => -piece_value(p, mv.1), None => 0}});
-
-        for mv in moves {
-            let mut new_board = board.clone();
-            move_piece_to(&mut new_board, mv.0, mv.1);
-            eval = minimax(&new_board, depth.saturating_sub(1), alpha, beta, true).min(eval);
-            beta = beta.min(eval); // update beta
-            if eval <= alpha { break; }
-        }
-        eval
-    }
+// Only trust an entry searched at least as deep as we need.
+if let Some(entry) = tt.get(&hash) {
+ if entry.depth >= depth {
+     match entry.bound {
+         Bound::Exact => return entry.value,
+         Bound::Lower => alpha = alpha.max(entry.value),
+         Bound::Upper => beta  = beta.min(entry.value),
+     }
+     if alpha >= beta { return entry.value; }
+ }
 }
 
-fn evaluate(board: &Board) -> i32{
+if depth == 0 {
+ let eval = evaluate(board);
+ tt.insert(hash, TTEntry { depth: 0, value: eval, bound: Bound::Exact });
+ return eval;
+}
+
+let mut moves = get_all_moves(board, side);
+moves.sort_by_key(|mv| match board[mv.1.0][mv.1.1] {
+ Some(p) => -piece_value(p, mv.1),
+ None => 0,
+});
+
+let value = if maximizing_player {
+ let mut eval = i32::MIN;
+ for mv in moves {
+     let mut nb = board.clone();
+     move_piece_to(&mut nb, mv.0, mv.1);
+     if get_all_moves(&nb, Side::Black).len() == 0 {
+        return i32::MAX
+     }
+     eval = minimax(&nb, depth - 1, alpha, beta, false, ztable, tt).max(eval);
+     alpha = alpha.max(eval);
+     if alpha >= beta { break; }
+ }
+ eval
+} else {
+ let mut eval = i32::MAX;
+ for mv in moves {
+     let mut nb = board.clone();
+     move_piece_to(&mut nb, mv.0, mv.1);
+     if get_all_moves(&nb, Side::White).len() == 0 {
+        return i32::MIN
+     }
+     eval = minimax(&nb, depth - 1, alpha, beta, true, ztable, tt).min(eval);
+     beta = beta.min(eval);
+     if beta <= alpha { break; }
+ }
+ eval
+};
+
+let bound = if value <= alpha_orig { Bound::Upper }
+         else if value >= beta_orig { Bound::Lower }
+         else { Bound::Exact };
+tt.insert(hash, TTEntry { depth, value, bound });
+value
+}
+
+pub fn evaluate(board: &Board) -> i32{
     let mut score: i32 = 0;
     for i in 0..64 {
         let r = i / 8;
@@ -102,23 +134,59 @@ fn piece_value(piece: Piece, coord: (usize, usize)) -> i32{
     if piece.color == Side::White{
         match piece.piece_type {
             PieceType::Pawn   => return 100 + PAWN_TABLE[coord.0][coord.1],
-            PieceType::Knight => return 300 + KNIGHT_TABLE[coord.0][coord.1],
-            PieceType::Bishop => return 300 + BISHOP_TABLE[coord.0][coord.1],
-            PieceType::Rook   => return 500 + ROOK_TABLE[coord.0][coord.1],
-            PieceType::Queen  => return 900 + QUEEN_TABLE[coord.0][coord.1],
+            PieceType::Knight => return 305 + KNIGHT_TABLE[coord.0][coord.1],
+            PieceType::Bishop => return 333 + BISHOP_TABLE[coord.0][coord.1],
+            PieceType::Rook   => return 563 + ROOK_TABLE[coord.0][coord.1],
+            PieceType::Queen  => return 950 + QUEEN_TABLE[coord.0][coord.1],
             PieceType::King   => return 100000 + KING_TABLE[coord.0][coord.1],
         };
     }else{
         match piece.piece_type {
             PieceType::Pawn   => return 100 + PAWN_TABLE[7 - coord.0][coord.1],
-            PieceType::Knight => return 300 + KNIGHT_TABLE[7 - coord.0][coord.1],
-            PieceType::Bishop => return 300 + BISHOP_TABLE[7 - coord.0][coord.1],
-            PieceType::Rook   => return 500 + ROOK_TABLE[7 - coord.0][coord.1],
-            PieceType::Queen  => return 900 + QUEEN_TABLE[7 - coord.0][coord.1],
+            PieceType::Knight => return 305 + KNIGHT_TABLE[7 - coord.0][coord.1],
+            PieceType::Bishop => return 333 + BISHOP_TABLE[7 - coord.0][coord.1],
+            PieceType::Rook   => return 563 + ROOK_TABLE[7 - coord.0][coord.1],
+            PieceType::Queen  => return 950 + QUEEN_TABLE[7 - coord.0][coord.1],
             PieceType::King   => return 100000 + KING_TABLE[7 - coord.0][coord.1],
         };
     }
 
+}
+
+#[derive(Clone, Copy)]
+enum Bound { Exact, Lower, Upper }
+
+#[derive(Clone, Copy)]
+struct TTEntry { depth: u8, value: i32, bound: Bound }
+
+struct ZobristTable {
+    pieces: [[[u64; 64]; 2]; 6],
+    black_to_move: u64,
+}
+
+impl ZobristTable {
+    fn new() -> Self {
+        let mut pieces = [[[0u64; 64]; 2]; 6];
+        for pt in 0..6 {
+            for color in 0..2 {
+                for sq in 0..64 {
+                    pieces[pt][color][sq] = rand::gen_range(0, u64::MAX);
+                }
+            }
+        }
+        ZobristTable { pieces, black_to_move: rand::gen_range(0, u64::MAX) }
+    }
+
+    fn hash(&self, board: &Board, side: Side) -> u64 {
+        let mut h: u64 = 0;
+        for sq in 0..64 {
+            if let Some(p) = board[sq / 8][sq % 8] {
+                h ^= self.pieces[p.piece_type as usize][p.color as usize][sq];
+            }
+        }
+        if side == Side::Black { h ^= self.black_to_move; }
+        h
+    }
 }
 
 // ALL OF THESE ARE FROM WHITES PERSPECTIVE, USE 7 - ROW WHEN INDEXING FOR BLACK

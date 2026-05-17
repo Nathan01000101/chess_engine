@@ -6,3 +6,5 @@ edition = "2024"
 [dependencies]
 macroquad = "0.4"
 rand = "0.9"
+rayon   = "1"
+dashmap = "6"
