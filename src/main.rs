@@ -1,5 +1,4 @@
 use macroquad::{ prelude::*};
-use macroquad::miniquad::date;
 use crate::ai::Player;
 use crate::human::HumanPlayer;
 use crate::minimax_ai_multithread::MinimaxMTAI;
@@ -17,6 +16,7 @@ mod minimax_ai;
 mod minimax_ai_multithread;
 
 const WINDOW_SIZE: f32 = 600.0;
+pub const DEPTH: u8 = 5;
 const GAMES: u8 = 16;
 
 #[derive(Clone, Copy, PartialEq)]
@@ -396,7 +396,7 @@ fn get_attacked_squares(board: &Board, coord: (usize, usize)) -> Vec<(usize, usi
 }
 
 
-fn get_valid_moves(board: &mut Board, coord: (usize, usize) ) -> Vec<(usize, usize)> {
+fn get_valid_moves(board: &Board, coord: (usize, usize) ) -> Vec<(usize, usize)> {
     if board[coord.0][coord.1].is_none() {return Vec::new()}
     let piece = board[coord.0][coord.1].unwrap();
     let mut not_checked: Vec<(usize, usize)> = get_attacked_squares(&board, coord);
@@ -411,10 +411,10 @@ fn get_valid_moves(board: &mut Board, coord: (usize, usize) ) -> Vec<(usize, usi
             if let Some(sp) = board[coord.0][0] {
                 if sp.piece_type == PieceType::Rook && !sp.has_moved {
                     if board[coord.0][1].is_none() && board[coord.0][2].is_none() && board[coord.0][3].is_none() {
-                        if !is_square_attacked_by(board, (coord.0, 1), opposite_side) 
-                            && !is_square_attacked_by(board, (coord.0, 2), opposite_side) 
-                            && !is_square_attacked_by(board, (coord.0, 3), opposite_side) {
-                            if !is_in_check(board, piece.color) {
+                        if !is_square_attacked_by(&board, (coord.0, 1), opposite_side) 
+                            && !is_square_attacked_by(&board, (coord.0, 2), opposite_side) 
+                            && !is_square_attacked_by(&board, (coord.0, 3), opposite_side) {
+                            if !is_in_check(&board, piece.color) {
                                 not_checked.push((coord.0, 2));
                             }
                         }
@@ -425,9 +425,9 @@ fn get_valid_moves(board: &mut Board, coord: (usize, usize) ) -> Vec<(usize, usi
             if let Some(sp) = board[coord.0][7] {
                 if sp.piece_type == PieceType::Rook && !sp.has_moved {
                     if board[coord.0][6].is_none() && board[coord.0][5].is_none() {
-                        if !is_square_attacked_by(board, (coord.0, 6), opposite_side) 
-                            && !is_square_attacked_by(board, (coord.0, 5), opposite_side) {
-                            if !is_in_check(board, piece.color) {
+                        if !is_square_attacked_by(&board, (coord.0, 6), opposite_side) 
+                            && !is_square_attacked_by(&board, (coord.0, 5), opposite_side) {
+                            if !is_in_check(&board, piece.color) {
                                 not_checked.push((coord.0, 6));
                             }
                         }
@@ -448,15 +448,13 @@ fn get_valid_moves(board: &mut Board, coord: (usize, usize) ) -> Vec<(usize, usi
         }
 
         // dont let king be in check
-        let back = board[coord.0][coord.1];
+        let mut nb = board.clone();
 
 
-        move_piece_to(&mut board, coord, (m.0 , m.1 ));
-        if is_in_check(&board, board[coord.0][coord.1].unwrap().color){
+        move_piece_to(&mut nb, coord, (m.0 , m.1 ));
+        if is_in_check(&nb, board[coord.0][coord.1].unwrap().color){
             continue;
         }
-        move_piece_to(&mut board, (m.0, m.1), coord);
-        board[m.0][m.1] = back;
         checked.push((m.0 as usize, m.1 as usize));
         
     }
@@ -465,7 +463,7 @@ fn get_valid_moves(board: &mut Board, coord: (usize, usize) ) -> Vec<(usize, usi
 
 
 
-// gets all moves that a side can make
+// gets all moves that a side can make ((from), (to))
 fn get_all_moves(board: &Board, side: Side) -> Vec<((usize, usize), (usize, usize))>{
     let mut moves: Vec<((usize, usize), (usize, usize))> = Vec::new();
     for i in 0..64 {
@@ -488,9 +486,9 @@ fn draw_board(tile_size: f32) {
     for row in 0..8 {
         for col in 0..8 {
             let color = if (row + col) % 2 == 0 {
-                Color::from_rgba(110, 110, 150, 255) // light square
+                Color::from_rgba(255,219,187, 255) // light square
             } else {
-                Color::from_rgba(55, 59, 71, 255)  // dark square
+                Color::from_rgba(250, 128, 114, 255)  // dark square
             };
             draw_rectangle(col as f32 * tile_size, row as f32 * tile_size, tile_size, tile_size, color);
         }
@@ -502,7 +500,7 @@ fn draw_moves(tile_size: f32, board: &Board, selected_piece: (usize, usize), fli
     let color = Color::from_rgba(100, 0, 0, 100);
     for mv in moves {
         if flipped{
-            draw_circle((mv.1) as f32 * tile_size + tile_size*0.5, ( 7 - mv.0) as f32 * tile_size + tile_size * 0.5, tile_size / 2.5, color);
+            draw_circle((7 - mv.1) as f32 * tile_size + tile_size*0.5, ( 7 - mv.0) as f32 * tile_size + tile_size * 0.5, tile_size / 2.5, color);
         }else{
             draw_circle(mv.1 as f32 * tile_size + tile_size*0.5, mv.0 as f32 * tile_size + tile_size*0.5, tile_size/2.5, color);
         }
@@ -532,7 +530,7 @@ fn draw_pieces(board: &Board, font: &Font, tile_size: f32, flipped: bool) {
         for col in 0..8 {
             if let Some(piece) = &board[row][col] {
                 let (draw_col, draw_row) = if flipped {
-                    (col, 7 - row)
+                    (7 - col, 7 - row)
                 } else {
                     (col, row)
                 };
@@ -562,6 +560,7 @@ async fn main() {
     let tile_size: f32 = WINDOW_SIZE / 8.0; 
     let font = load_ttf_font("assets/FreeSerif.ttf").await.unwrap();
     let mut board_flipped = false;
+    let move_color:Color = Color::from_rgba(228,217,111, 255);
 
     let mut white_wins: f32 = 0.0;
     let mut black_wins: f32 = 0.0;
@@ -582,7 +581,7 @@ async fn main() {
     let player1: Box<dyn Player> = match type1.as_str() {
         "human"     => Box::new(HumanPlayer),
         "random"    => Box::new(RandomAI),
-        "minimax"   => Box::new(MinimaxAI {depth: 5}),
+        "minimax"   => Box::new(MinimaxAI {depth: DEPTH}),
         "minimaxmt" => Box::new(MinimaxMTAI {depth: 6}),
         _           => panic!("unknown player type: {type1}")
     };
@@ -590,7 +589,7 @@ async fn main() {
     let player2: Box<dyn Player> = match type2.as_str() {
         "human"     => Box::new(HumanPlayer),
         "random"    => Box::new(RandomAI),
-        "minimax"   => Box::new(MinimaxAI {depth: 5}),
+        "minimax"   => Box::new(MinimaxAI {depth: DEPTH}),
         "minimaxmt" => Box::new(MinimaxMTAI {depth: 6}),
         _           => panic!("unknown player type: {type2}")
     };
@@ -603,6 +602,7 @@ async fn main() {
 
     let mut selected_piece: Option<Piece> = None;
     let mut selected_coords: Option<(usize, usize)> = None; 
+    let mut last_move: Option<((usize, usize),(usize, usize))> = None;
 
 
     loop {
@@ -626,7 +626,7 @@ async fn main() {
                 // get any input
                 if macroquad::input::is_mouse_button_pressed(MouseButton::Left){
                     let col: usize = if board_flipped{
-                         7 - (x / tile_size) as usize
+                        7 - (x / tile_size) as usize
                     }else{
                         (x / tile_size) as usize
                     };
@@ -647,6 +647,7 @@ async fn main() {
         
                         if get_valid_moves(&board, selected_coords.unwrap()).contains(&(row, col)) && board[selected_coords.unwrap().0][selected_coords.unwrap().1].unwrap().color == current_turn{
                             move_piece_to(&mut board, selected_coords.unwrap(), (row, col));
+                            last_move = Some(((row, col), selected_coords.unwrap()));
                             current_turn = if current_turn == Side::White {Side::Black} else {Side::White};
                             println!("eval: {}",minimax_ai::evaluate(&board));
                             selected_piece = None;
@@ -661,6 +662,7 @@ async fn main() {
             }else{
                 let mv: ((usize, usize), (usize, usize)) = player1.get_move(&board, current_turn);
                 move_piece_to(&mut board, mv.0, mv.1);
+                last_move = Some(mv);
                 println!("eval: {}",minimax_ai::evaluate(&board));
                 if get_all_moves(&board, Side::Black).len() == 0{
                     if is_in_check(&board, Side::Black){
@@ -702,6 +704,7 @@ async fn main() {
         
                         if get_valid_moves(&board, selected_coords.unwrap()).contains(&(row, col)) && board[selected_coords.unwrap().0][selected_coords.unwrap().1].unwrap().color == current_turn{
                             move_piece_to(&mut board, selected_coords.unwrap(), (row, col));
+                            last_move = Some(((row, col), selected_coords.unwrap()));
                             println!("eval: {}",minimax_ai::evaluate(&board));
                             current_turn = if current_turn == Side::White {Side::Black} else {Side::White};
                             selected_piece = None;
@@ -716,6 +719,7 @@ async fn main() {
             }else{
                 let mv: ((usize, usize), (usize, usize)) = player2.get_move(&board, current_turn);
                 move_piece_to(&mut board, mv.0, mv.1);
+                last_move = Some(mv);
                 println!("eval: {}",minimax_ai::evaluate(&board));
                 if get_all_moves(&board, Side::White).len() == 0{
                     if is_in_check(&board, Side::White){
@@ -733,10 +737,20 @@ async fn main() {
             }
         }
         
-
+        thread::sleep(Duration::from_secs(1));
         // display visuals
         clear_background(WHITE);
         draw_board(tile_size);
+        if last_move.is_some(){
+            let lm = last_move.unwrap();
+            if board_flipped{
+                draw_rectangle((7 - lm.1.1) as f32 * tile_size, ( 7 - lm.1.0) as f32 * tile_size, tile_size, tile_size, move_color);
+                draw_rectangle((7 - lm.0.1) as f32 * tile_size, ( 7 - lm.0.0) as f32 * tile_size, tile_size, tile_size, move_color);
+            }else{
+                draw_rectangle(lm.0.1 as f32 * tile_size, lm.0.0 as f32 * tile_size, tile_size, tile_size, move_color);
+                draw_rectangle(lm.1.1 as f32 * tile_size, lm.1.0 as f32 * tile_size, tile_size, tile_size, move_color);
+            }
+        }
         if selected_coords.is_some() && board[selected_coords.unwrap().0][selected_coords.unwrap().1].is_some(){
             if board[selected_coords.unwrap().0][selected_coords.unwrap().1].unwrap().color == current_turn{
                 draw_moves(tile_size, &board, selected_coords.unwrap(), board_flipped);

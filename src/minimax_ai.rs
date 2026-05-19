@@ -9,6 +9,8 @@ use macroquad::{ prelude::*};
 use macroquad::miniquad::date;
 use crate::get_all_moves;
 use crate::move_piece_to;
+use crate::is_in_check;
+use crate::DEPTH;
 
 pub struct MinimaxAI { pub depth: u8}
 impl Player for MinimaxAI {
@@ -47,70 +49,78 @@ impl Player for MinimaxAI {
 }
 
 fn minimax(board: &Board, depth: u8, mut alpha: i32, mut beta: i32,
-    maximizing_player: bool, ztable: &ZobristTable,
-    tt: &mut HashMap<u64, TTEntry>) -> i32 {
-let side = if maximizing_player { Side::White } else { Side::Black };
-let hash = ztable.hash(board, side);
-let alpha_orig = alpha;
-let beta_orig = beta;
+        maximizing_player: bool, ztable: &ZobristTable,
+        tt: &mut HashMap<u64, TTEntry>) -> i32 {
+    let side = if maximizing_player { Side::White } else { Side::Black };
+    let hash = ztable.hash(board, side);
+    let alpha_orig = alpha;
+    let beta_orig = beta;
 
-// Only trust an entry searched at least as deep as we need.
-if let Some(entry) = tt.get(&hash) {
- if entry.depth >= depth {
-     match entry.bound {
-         Bound::Exact => return entry.value,
-         Bound::Lower => alpha = alpha.max(entry.value),
-         Bound::Upper => beta  = beta.min(entry.value),
-     }
-     if alpha >= beta { return entry.value; }
- }
-}
+    // Only trust an entry searched at least as deep as we need.
+    if let Some(entry) = tt.get(&hash) {
+    if entry.depth >= depth {
+        match entry.bound {
+            Bound::Exact => return entry.value,
+            Bound::Lower => alpha = alpha.max(entry.value),
+            Bound::Upper => beta  = beta.min(entry.value),
+        }
+        if alpha >= beta { return entry.value; }
+    }
+    }
 
-if depth == 0 {
- let eval = evaluate(board);
- tt.insert(hash, TTEntry { depth: 0, value: eval, bound: Bound::Exact });
- return eval;
-}
+    if depth == 0 {
+    let eval = evaluate(board);
+    tt.insert(hash, TTEntry { depth: 0, value: eval, bound: Bound::Exact });
+    return eval;
+    }
 
-let mut moves = get_all_moves(board, side);
-moves.sort_by_key(|mv| match board[mv.1.0][mv.1.1] {
- Some(p) => -piece_value(p, mv.1),
- None => 0,
-});
+    let mut moves = get_all_moves(board, side);
+    moves.sort_by_key(|mv| match board[mv.1.0][mv.1.1] {
+    Some(p) => -piece_value(p, mv.1),
+    None => 0,
+    });
 
-let value = if maximizing_player {
- let mut eval = i32::MIN;
- for mv in moves {
-     let mut nb = board.clone();
-     move_piece_to(&mut nb, mv.0, mv.1);
-     if get_all_moves(&nb, Side::Black).len() == 0 {
-        return i32::MAX
-     }
-     eval = minimax(&nb, depth - 1, alpha, beta, false, ztable, tt).max(eval);
-     alpha = alpha.max(eval);
-     if alpha >= beta { break; }
- }
- eval
-} else {
- let mut eval = i32::MAX;
- for mv in moves {
-     let mut nb = board.clone();
-     move_piece_to(&mut nb, mv.0, mv.1);
-     if get_all_moves(&nb, Side::White).len() == 0 {
-        return i32::MIN
-     }
-     eval = minimax(&nb, depth - 1, alpha, beta, true, ztable, tt).min(eval);
-     beta = beta.min(eval);
-     if beta <= alpha { break; }
- }
- eval
-};
+    if moves.is_empty() {
+        if is_in_check(board, side) {
 
-let bound = if value <= alpha_orig { Bound::Upper }
-         else if value >= beta_orig { Bound::Lower }
-         else { Bound::Exact };
-tt.insert(hash, TTEntry { depth, value, bound });
-value
+            let ply = DEPTH.saturating_sub(depth);
+            // side to move is mated; score from White's perspective
+            return if maximizing_player { -500000 + ply as i32 }
+                else                 {  500000 - ply as i32 };
+        } else {
+            return 0; // stalemate
+        }
+    }
+
+    let value = if maximizing_player {
+    let mut eval = i32::MIN;
+    for mv in &moves {
+        let mut nb = board.clone();
+        move_piece_to(&mut nb, mv.0, mv.1);
+
+        eval = minimax(&nb, depth - 1, alpha, beta, false, ztable, tt).max(eval);
+        alpha = alpha.max(eval);
+        if alpha >= beta { break; }
+    }
+    eval
+    } else {
+    let mut eval = i32::MAX;
+    for mv in moves {
+        let mut nb = board.clone();
+        move_piece_to(&mut nb, mv.0, mv.1);
+
+        eval = minimax(&nb, depth - 1, alpha, beta, true, ztable, tt).min(eval);
+        beta = beta.min(eval);
+        if beta <= alpha { break; }
+    }
+    eval
+    };
+
+    let bound = if value <= alpha_orig { Bound::Upper }
+            else if value >= beta_orig { Bound::Lower }
+            else { Bound::Exact };
+    tt.insert(hash, TTEntry { depth, value, bound });
+    value
 }
 
 pub fn evaluate(board: &Board) -> i32{
