@@ -15,6 +15,7 @@ impl Player for RandomAI {
     fn get_move(&self, board: &Board, side: Side) -> ((usize, usize), (usize, usize)) {
         let mut moves: Vec<((usize, usize), (usize, usize))> = Vec::new();
 
+        let mut b = board.clone();
         thread::sleep(Duration::from_secs_f32(0.5));
 
         for i in 0..64 {
@@ -22,7 +23,7 @@ impl Player for RandomAI {
             let c = i % 8;
             if let Some(p) = board[r][c] {
                 if p.color == side {
-                    for mv in get_valid_moves(board, (r, c)) {
+                    for mv in get_valid_moves(&mut b, (r, c)) {
                         moves.push(((r, c), mv));
                     }
                 }

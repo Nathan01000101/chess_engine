@@ -5,18 +5,21 @@ use crate::PieceType;
 use crate::Piece;
 use crate::Side;
 use crate::ai::Player;
+use crate::undo_move;
+use crate::can_castle_kingside;
+use crate::can_castle_queenside;
 use macroquad::{ prelude::*};
 use macroquad::miniquad::date;
 use crate::get_all_moves;
-use crate::move_piece_to;
+use crate::make_move;
 use crate::is_in_check;
 use crate::DEPTH;
 
-pub struct MinimaxAI { pub depth: u8}
+pub struct MinimaxAI { pub depth: usize}
 impl Player for MinimaxAI {
     fn as_any(&self) -> &dyn Any { self }
     fn get_move(&self, board: &Board, side: Side) -> ((usize, usize), (usize, usize)) {
-
+        let mut b = board.clone();
         //transposition table
         let mut transposition_table: HashMap<u64, TTEntry> = HashMap::new();
         let zobrist_table: ZobristTable = ZobristTable::new();
@@ -25,14 +28,13 @@ impl Player for MinimaxAI {
         let mut best_eval: i32 = if side == Side::White {i32::MIN} else {i32::MAX};
 
         rand::srand(date::now() as u64);
-        let mut moves = get_all_moves(board, side);
+        let mut moves = get_all_moves(&mut b, side);
         // move ordering
         moves.sort_by_key(|mv| { match board[mv.1.0][mv.1.1]{ Some(p) => -piece_value(p, mv.1), None => 0}});
         for mv in moves{
-            let mut new_board = board.clone();
-            move_piece_to(&mut new_board, mv.0,mv.1);
-            let eval = minimax(&new_board, self.depth.saturating_sub(1), i32::MIN, i32::MAX, side == Side::Black, &zobrist_table, &mut transposition_table);
-
+            let undo = make_move(&mut b, mv.0,mv.1);
+            let eval = minimax(&mut b, self.depth.saturating_sub(1), i32::MIN, i32::MAX, &zobrist_table, &mut transposition_table);
+            undo_move(&mut b, undo);
             if side == Side::White && eval > best_eval || side == Side::Black && eval < best_eval{
                 best_eval = eval;
                 best_move = mv;
@@ -48,11 +50,11 @@ impl Player for MinimaxAI {
     }
 }
 
-fn minimax(board: &Board, depth: u8, mut alpha: i32, mut beta: i32,
-        maximizing_player: bool, ztable: &ZobristTable,
+fn minimax(board: &mut Board, depth: usize, mut alpha: i32, mut beta: i32,
+        ztable: &ZobristTable,
         tt: &mut HashMap<u64, TTEntry>) -> i32 {
-    let side = if maximizing_player { Side::White } else { Side::Black };
-    let hash = ztable.hash(board, side);
+    let side = if board.white_to_move { Side::White } else { Side::Black };
+    let hash = ztable.hash(board);
     let alpha_orig = alpha;
     let beta_orig = beta;
 
@@ -69,9 +71,9 @@ fn minimax(board: &Board, depth: u8, mut alpha: i32, mut beta: i32,
     }
 
     if depth == 0 {
-    let eval = evaluate(board);
-    tt.insert(hash, TTEntry { depth: 0, value: eval, bound: Bound::Exact });
-    return eval;
+        let eval = evaluate(board);
+        tt.insert(hash, TTEntry { depth: 0, value: eval, bound: Bound::Exact });
+        return eval;
     }
 
     let mut moves = get_all_moves(board, side);
@@ -80,40 +82,41 @@ fn minimax(board: &Board, depth: u8, mut alpha: i32, mut beta: i32,
     None => 0,
     });
 
+    // mate check
     if moves.is_empty() {
         if is_in_check(board, side) {
 
             let ply = DEPTH.saturating_sub(depth);
             // side to move is mated; score from White's perspective
-            return if maximizing_player { -500000 + ply as i32 }
+            return if board.white_to_move { -500000 + ply as i32 }
                 else                 {  500000 - ply as i32 };
         } else {
             return 0; // stalemate
         }
     }
 
-    let value = if maximizing_player {
-    let mut eval = i32::MIN;
-    for mv in &moves {
-        let mut nb = board.clone();
-        move_piece_to(&mut nb, mv.0, mv.1);
+    let value = if board.white_to_move {
+        let mut eval = i32::MIN;
+        for mv in &moves {
+            let undo = make_move(board, mv.0, mv.1);
+            eval = minimax(board, depth - 1, alpha, beta, ztable, tt).max(eval);
+            undo_move(board, undo);
 
-        eval = minimax(&nb, depth - 1, alpha, beta, false, ztable, tt).max(eval);
-        alpha = alpha.max(eval);
-        if alpha >= beta { break; }
-    }
-    eval
+            alpha = alpha.max(eval);
+            if alpha >= beta { break; }
+        }
+        eval
     } else {
-    let mut eval = i32::MAX;
-    for mv in moves {
-        let mut nb = board.clone();
-        move_piece_to(&mut nb, mv.0, mv.1);
+        let mut eval = i32::MAX;
+        for mv in moves {
+            let undo = make_move(board, mv.0, mv.1);
+            eval = minimax(board, depth - 1, alpha, beta, ztable, tt).min(eval);
+            undo_move(board, undo);
 
-        eval = minimax(&nb, depth - 1, alpha, beta, true, ztable, tt).min(eval);
-        beta = beta.min(eval);
-        if beta <= alpha { break; }
-    }
-    eval
+            beta = beta.min(eval);
+            if beta <= alpha { break; }
+        }
+        eval
     };
 
     let bound = if value <= alpha_orig { Bound::Upper }
@@ -167,11 +170,13 @@ fn piece_value(piece: Piece, coord: (usize, usize)) -> i32{
 enum Bound { Exact, Lower, Upper }
 
 #[derive(Clone, Copy)]
-struct TTEntry { depth: u8, value: i32, bound: Bound }
+struct TTEntry { depth: usize, value: i32, bound: Bound }
 
 struct ZobristTable {
     pieces: [[[u64; 64]; 2]; 6],
     black_to_move: u64,
+    en_passant_file: [u64; 8],
+    castling: [u64; 4],  // WK, WQ, BK, BQ
 }
 
 impl ZobristTable {
@@ -184,19 +189,46 @@ impl ZobristTable {
                 }
             }
         }
-        ZobristTable { pieces, black_to_move: rand::gen_range(0, u64::MAX) }
+
+        let mut en_passant_file = [0u64; 8];
+        for f in 0..8 {
+            en_passant_file[f] = rand::gen_range(0, u64::MAX);
+        }
+
+        let mut castling = [0u64; 4];
+        for i in 0..4 {
+            castling[i] = rand::gen_range(0, u64::MAX);
+        }
+
+        ZobristTable {
+            pieces,
+            black_to_move: rand::gen_range(0, u64::MAX),
+            en_passant_file,
+            castling,
+        }
     }
 
-    fn hash(&self, board: &Board, side: Side) -> u64 {
-        let mut h: u64 = 0;
-        for sq in 0..64 {
-            if let Some(p) = board[sq / 8][sq % 8] {
-                h ^= self.pieces[p.piece_type as usize][p.color as usize][sq];
-            }
+    fn hash(&self, board: &Board) -> u64 {
+    let mut h: u64 = 0;
+    for sq in 0..64 {
+        if let Some(p) = board[sq / 8][sq % 8] {
+            h ^= self.pieces[p.piece_type as usize][p.color as usize][sq];
         }
-        if side == Side::Black { h ^= self.black_to_move; }
-        h
     }
+    if !board.white_to_move { h ^= self.black_to_move; }
+
+    if let Some(target) = board.en_passant_target {
+        h ^= self.en_passant_file[target.1];
+    }
+
+    if can_castle_kingside(board, Side::White)  { h ^= self.castling[0]; }
+    if can_castle_queenside(board, Side::White) { h ^= self.castling[1]; }
+    if can_castle_kingside(board, Side::Black)  { h ^= self.castling[2]; }
+    if can_castle_queenside(board, Side::Black) { h ^= self.castling[3]; }
+
+    h
+}
+
 }
 
 // ALL OF THESE ARE FROM WHITES PERSPECTIVE, USE 7 - ROW WHEN INDEXING FOR BLACK
@@ -213,14 +245,14 @@ const PAWN_TABLE: [[i32; 8]; 8] = [
 ];
 
 const KNIGHT_TABLE: [[i32; 8]; 8] = [
-    [ -50,    -50,  -50,   -50,  -50,   -50,   -50,  -50  ],  // avoid edges
+    [ -50,    -30,  -30,   -30,  -30,   -30,   -30,  -50  ],  // avoid edges
     [ -50,     0,    0,     5,    5,     0,     0,   -50  ],
     [ -50,     5,    10,    15,   15,    10,    5,   -50  ],
     [ -50,     5,    10,    25,   25,    10,    5,   -50  ],
     [ -50,     5,    10,    25,   25,    10,    5,   -50  ],
     [ -50,     0,    10,    15,   15,    10,    5,   -50  ],
     [ -50,    -5,   -5,     5,    5,    -5,    -5,   -50  ],  
-    [ -50,    -50,  -50,   -50,  -50,   -50,   -50,  -50  ],  // starting rank
+    [ -50,    -10,  -30,   -30,  -30,   -30,   -10,  -50  ],  // starting rank
 ];
 
 const BISHOP_TABLE: [[i32; 8]; 8] = [
