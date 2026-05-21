@@ -30,7 +30,7 @@ impl Player for MinimaxAI {
         rand::srand(date::now() as u64);
         let mut moves = get_all_moves(&mut b, side);
         // move ordering
-        moves.sort_by_key(|mv| { match board[mv.1.0][mv.1.1]{ Some(p) => -piece_value(p, mv.1), None => 0}});
+        moves.sort_by_key(|mv| { match board[mv.1.0][mv.1.1]{ Some(p) => -piece_value(p, mv.1, board.moves), None => 0}});
         for mv in moves{
             let undo = make_move(&mut b, mv.0,mv.1);
             let eval = minimax(&mut b, self.depth.saturating_sub(1), i32::MIN, i32::MAX, &zobrist_table, &mut transposition_table);
@@ -78,7 +78,7 @@ fn minimax(board: &mut Board, depth: usize, mut alpha: i32, mut beta: i32,
 
     let mut moves = get_all_moves(board, side);
     moves.sort_by_key(|mv| match board[mv.1.0][mv.1.1] {
-    Some(p) => -piece_value(p, mv.1),
+    Some(p) => -piece_value(p, mv.1, board.moves),
     None => 0,
     });
 
@@ -99,7 +99,7 @@ fn minimax(board: &mut Board, depth: usize, mut alpha: i32, mut beta: i32,
         let mut eval = i32::MIN;
         for mv in &moves {
             let undo = make_move(board, mv.0, mv.1);
-            eval = minimax(board, depth - 1, alpha, beta, ztable, tt).max(eval);
+            eval = minimax(board, depth -1, alpha, beta, ztable, tt).max(eval);
             undo_move(board, undo);
 
             alpha = alpha.max(eval);
@@ -133,9 +133,9 @@ pub fn evaluate(board: &Board) -> i32{
         let c = i % 8;
         if let Some(p) = board[r][c] {
             if p.color == Side::White {
-                score += piece_value(p, (r, c));
+                score += piece_value(p, (r, c), board.moves);
             } else {
-                score -= piece_value(p, (r, c));
+                score -= piece_value(p, (r, c), board.moves);
             }
         }
     }
@@ -143,7 +143,7 @@ pub fn evaluate(board: &Board) -> i32{
     score
 }
 
-fn piece_value(piece: Piece, coord: (usize, usize)) -> i32{
+fn piece_value(piece: Piece, coord: (usize, usize), moves: u8) -> i32{
     if piece.color == Side::White{
         match piece.piece_type {
             PieceType::Pawn   => return 100 + PAWN_TABLE[coord.0][coord.1],
@@ -151,7 +151,7 @@ fn piece_value(piece: Piece, coord: (usize, usize)) -> i32{
             PieceType::Bishop => return 333 + BISHOP_TABLE[coord.0][coord.1],
             PieceType::Rook   => return 563 + ROOK_TABLE[coord.0][coord.1],
             PieceType::Queen  => return 950 + QUEEN_TABLE[coord.0][coord.1],
-            PieceType::King   => return 100000 + KING_TABLE[coord.0][coord.1],
+            PieceType::King   => if moves < 35 {return 100000 + KING_TABLE[coord.0][coord.1]} else {return 100000 + KING_TABLE_LATE_GAME[coord.0][coord.1] },
         };
     }else{
         match piece.piece_type {
@@ -160,7 +160,7 @@ fn piece_value(piece: Piece, coord: (usize, usize)) -> i32{
             PieceType::Bishop => return 333 + BISHOP_TABLE[7 - coord.0][coord.1],
             PieceType::Rook   => return 563 + ROOK_TABLE[7 - coord.0][coord.1],
             PieceType::Queen  => return 950 + QUEEN_TABLE[7 - coord.0][coord.1],
-            PieceType::King   => return 100000 + KING_TABLE[7 - coord.0][coord.1],
+            PieceType::King   => if moves < 35 {return 100000 + KING_TABLE[7 - coord.0][coord.1]} else {return 100000 + KING_TABLE_LATE_GAME[7 - coord.0][coord.1] },
         };
     }
 
@@ -297,4 +297,15 @@ const KING_TABLE: [[i32; 8]; 8] = [
     [ -10, -20, -20, -20, -20, -20, -20, -10 ],
     [  20,  20,   0,   0,   0,   0,  20,  20 ],
     [  20,  30,  10,   0,   0,  10,  30,  20 ],  // castled positions rewarded
+];
+
+const KING_TABLE_LATE_GAME: [[i32; 8]; 8] = [
+    [ -30, -30, -30, -30, -30, -30, -30, -30 ], // GET IN THE MIX!!
+    [ -30, -10, -10, -10, -10, -10, -10, -30 ],
+    [ -30, -10,   5,   5,   5,   5, -10, -30 ],
+    [ -30, -10,   5,   5,   5,   5, -10, -30 ],
+    [ -30, -10,   5,   5,   5,   5, -10, -30 ],
+    [ -30, -10,   5,   5,   5,   5, -10, -30 ],
+    [ -30, -10, -10, -10, -10, -10, -10, -30 ],
+    [ -30, -30, -30, -30, -30, -30, -30, -30 ],  // middle positions rewarded
 ];

@@ -57,6 +57,7 @@ struct Piece {
 #[derive(Clone, Copy, PartialEq, Debug)]
 struct Board{
     squares: [[Option<Piece>; 8]; 8],
+    moves: u8,
     en_passant_target: Option<(usize, usize)>,
     white_to_move: bool
 }
@@ -87,7 +88,7 @@ struct Undo{
 
 // board logic
 fn new_board() -> Board {
-    let mut board = Board {squares: [[None; 8]; 8], en_passant_target: None, white_to_move: true };
+    let mut board = Board {squares: [[None; 8]; 8], moves: 0, en_passant_target: None, white_to_move: true };
 
     // Helper closure to place a piece
     let w = |pt| Some(Piece { piece_type: pt, color: Side::White, has_moved: false});
@@ -249,7 +250,7 @@ fn make_move(board: &mut Board, old: (usize, usize), new: (usize, usize)) -> Und
         
         // remove en passant target
         board.en_passant_target = None;
-
+        board.moves += 1;
         board.white_to_move = !board.white_to_move;
         if p.piece_type == PieceType::Pawn{
             
@@ -266,7 +267,6 @@ fn make_move(board: &mut Board, old: (usize, usize), new: (usize, usize)) -> Und
             }
 
             // check if promoted
-
             if new.0 == 0 || new.0 == 7{
                 p.piece_type = PieceType::Queen;
             }
@@ -297,6 +297,7 @@ fn make_move(board: &mut Board, old: (usize, usize), new: (usize, usize)) -> Und
 
 fn undo_move(board: &mut Board, undo: Undo){
     board.white_to_move = !board.white_to_move;
+    board.moves -= 1;
     board[undo.last_move.from.0][undo.last_move.from.1] = Some(undo.moving_piece_before);
     board[undo.last_move.to.0][undo.last_move.to.1] = undo.captured_piece;
     board.en_passant_target = undo.previous_en_passant_target;
@@ -723,6 +724,7 @@ async fn main() {
 
         }
 
+
         if macroquad::input::is_key_pressed(KeyCode::F){
             board_flipped = !board_flipped;
         }
@@ -745,6 +747,7 @@ async fn main() {
         
                         if get_valid_moves(&mut board, selected_coords.unwrap()).contains(&(row, col)) && board[selected_coords.unwrap().0][selected_coords.unwrap().1].unwrap().color == current_turn{
                             make_move(&mut board, selected_coords.unwrap(), (row, col));
+                            println!("move {}:", board.moves);
                             println!("eval: {}",minimax_ai::evaluate(&board));
                             last_move = Some(((row, col), selected_coords.unwrap()));
                             current_turn = if current_turn == Side::White {Side::Black} else {Side::White};
@@ -774,6 +777,7 @@ async fn main() {
                 if let Some(rx) = &thinking {
                     if let Ok(mv) = rx.try_recv() {
                         make_move(&mut board, mv.0, mv.1);
+                        println!("move {}:", board.moves);
                         println!("eval: {}",minimax_ai::evaluate(&board));
                         last_move = Some(mv);
                         if get_all_moves(&mut board, Side::Black).len() == 0{
@@ -811,6 +815,7 @@ async fn main() {
         
                         if get_valid_moves(&mut board, selected_coords.unwrap()).contains(&(row, col)) && board[selected_coords.unwrap().0][selected_coords.unwrap().1].unwrap().color == current_turn{
                             make_move(&mut board, selected_coords.unwrap(), (row, col));
+                            println!("move {}:", board.moves);
                             println!("eval: {}",minimax_ai::evaluate(&board));
                             last_move = Some(((row, col), selected_coords.unwrap()));
                             current_turn = if current_turn == Side::White {Side::Black} else {Side::White};
@@ -840,6 +845,7 @@ async fn main() {
                 if let Some(rx) = &thinking {
                     if let Ok(mv) = rx.try_recv() {
                         make_move(&mut board, mv.0, mv.1);
+                        println!("move {}:", board.moves);
                         println!("eval: {}",minimax_ai::evaluate(&board));
                         last_move = Some(mv);
                         if get_all_moves(&mut board, Side::White).len() == 0{

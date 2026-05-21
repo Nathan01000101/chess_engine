@@ -67,4 +67,11 @@ mod make_unmake_tests {
         let nodes = perft_with_undo_check(&mut board, 4);
         assert_eq!(nodes, 197_281, "Depth 4 from start should be 197,281 nodes");
     }
+
+        #[test]
+    fn roundtrip_from_starting_position_depth_5() {
+        let mut board = new_board();
+        let nodes = perft_with_undo_check(&mut board, 5);
+        assert_eq!(nodes, 4_865_609, "Depth 4 from start should be 4,865,609 nodes");
+    }
 }
