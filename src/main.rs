@@ -18,7 +18,7 @@ mod minimax_ai;
 mod tests;
 
 const WINDOW_SIZE: f32 = 600.0;
-pub const DEPTH: usize = 5;
+pub const DEPTH: usize = 6;
 const GAMES: usize = 16;
 
 const BISHOP_DIRS: [(i16, i16); 4] = [(-1, 1), (1, 1), (-1, -1), (1, -1)];
@@ -58,6 +58,8 @@ struct Piece {
 struct Board{
     squares: [[Option<Piece>; 8]; 8],
     moves: u8,
+    white_king: (u8, u8),
+    black_king: (u8, u8),
     en_passant_target: Option<(usize, usize)>,
     white_to_move: bool
 }
@@ -88,7 +90,7 @@ struct Undo{
 
 // board logic
 fn new_board() -> Board {
-    let mut board = Board {squares: [[None; 8]; 8], moves: 0, en_passant_target: None, white_to_move: true };
+    let mut board = Board {squares: [[None; 8]; 8], white_king: (7, 4), black_king: (0, 4), moves: 0, en_passant_target: None, white_to_move: true };
 
     // Helper closure to place a piece
     let w = |pt| Some(Piece { piece_type: pt, color: Side::White, has_moved: false});
@@ -133,20 +135,9 @@ fn in_bounds(x: i16, y: i16) -> bool{
 
 // determines if a side is in check with a given board state
 fn is_in_check(board: &Board, side: Side) -> bool {
-    // find the king
-    let mut king: (i16, i16) = (0, 0);
-    'outer: for r in 0..8 {
-        for c in 0..8 {
-            if let Some(p) = board[r][c] {
-                if p.color == side && p.piece_type == PieceType::King {
-                    king = (r as i16, c as i16);
-                    break 'outer;
-                }
-            }
-        }
-    }
     
     let enemy = if side == Side::White {Side::Black} else {Side::White};
+    let king: (i16, i16) = if side == Side::White { (board.white_king.0 as i16, board.white_king.1 as i16)} else { (board.black_king.0 as i16, board.black_king.1 as i16) };
 
     // any opposing piece attacking the king?
     // pawns?
@@ -221,20 +212,90 @@ fn is_in_check(board: &Board, side: Side) -> bool {
 
 // determines if a given square is attacked by a given side
 fn is_square_attacked_by(board: &Board, coords: (usize, usize), side: Side) -> bool{
-    //check all pieces
-    for i in 0..64{
-        let c: usize = i % 8;
-        let r: usize = i / 8;
-        
-        if let Some(p) = board[r][c]{
-            if p.color == side{
-                for mv in get_attacked_squares(board, (r, c)){
-                    if mv == coords {return true}
+    
+    // pawns?
+    let pawn_dir = if side == Side::White { -1 } else { 1 };
+    for dc in [1, -1]{
+        let pc = coords.1 as i16 + dc;
+        let pr = coords.0 as i16+ pawn_dir;
+        if in_bounds(pc, pr){
+            if let Some(p) = board[pr as usize][pc as usize]{
+                if p.color == side{
+                    if p.piece_type == PieceType::Pawn{
+                        return true;
+                    }
+
                 }
-                
             }
         }
     }
+
+    //knights?
+    for offset in KNIGHT_OFFSETS{
+        let kc = coords.1 as i16 + offset.1;
+        let kr = coords.0 as i16 + offset.0;
+        if in_bounds(kc, kr){
+            if let Some(p) = board[kr as usize][kc as usize]{
+                if p.color == side{
+                    if p.piece_type == PieceType::Knight{
+                        return true;
+                    }    
+                }
+            }
+        }
+    }
+
+    // bishops or queens?
+    for dir in BISHOP_DIRS{
+        for i in 1..8{
+            if in_bounds(coords.0 as i16 + dir.0 * i, coords.1 as i16 + dir.1 * i){
+                if let Some(p) = board[(coords.0 as i16 + dir.0 * i) as usize][ (coords.1 as i16 + dir.1 * i) as usize]{
+                    if p.color == side{
+                        if p.piece_type == PieceType::Bishop || p.piece_type == PieceType::Queen{
+                            return true;
+                        }
+                    }
+                    break;
+                }
+            }else{
+                break;
+            }
+        }
+    }
+
+    // rooks or queens?
+    for dir in ROOK_DIRS{
+        for i in 1..8{
+            if in_bounds(coords.0 as i16 + dir.0 * i, coords.1 as i16+ dir.1 * i){
+                if let Some(p) = board[(coords.0 as i16 + dir.0 * i) as usize][ (coords.1 as i16 + dir.1 * i) as usize]{
+                    if p.color == side{
+                        if p.piece_type == PieceType::Rook || p.piece_type == PieceType::Queen{
+                            return true;
+                        }
+                    }
+                    break;
+                }
+            }else{
+                break;
+            }
+        }
+    }
+
+    // king ? 
+    for offset in KING_OFFSETS{
+        let kc = coords.1 as i16 + offset.1;
+        let kr = coords.0 as i16 + offset.0;
+        if in_bounds(kc, kr){
+            if let Some(p) = board[kr as usize][kc as usize]{
+                if p.color == side{
+                    if p.piece_type == PieceType::King{
+                        return true;
+                    }    
+                }
+            }
+        }
+    }
+
     false
 }
 
@@ -271,6 +332,11 @@ fn make_move(board: &mut Board, old: (usize, usize), new: (usize, usize)) -> Und
                 p.piece_type = PieceType::Queen;
             }
         }else if p.piece_type == PieceType::King {
+            if p.color == Side::White{
+                board.white_king = (new.0 as u8, new.1 as u8);
+            }else{
+                board.black_king = (new.0 as u8, new.1 as u8);
+            }
             let dx = new.1 as i16 - old.1 as i16;
             if dx == 2 {
                 if let Some(mut rook) = board[new.0][7] {
@@ -309,6 +375,11 @@ fn undo_move(board: &mut Board, undo: Undo){
             }
         }
     }else if undo.moving_piece_before.piece_type == PieceType::King {
+        if undo.moving_piece_before.color == Side::White{
+            board.white_king = (undo.last_move.from.0 as u8, undo.last_move.from.1 as u8);
+        }else{
+            board.black_king = (undo.last_move.from.0 as u8, undo.last_move.from.1 as u8);
+        }
         //check for castling move
         let dx: i16 = undo.last_move.to.1 as i16 - undo.last_move.from.1 as i16;
         if dx.abs() == 2{
@@ -750,6 +821,17 @@ async fn main() {
                             println!("move {}:", board.moves);
                             println!("eval: {}",minimax_ai::evaluate(&board));
                             last_move = Some(((row, col), selected_coords.unwrap()));
+                            if get_all_moves(&mut board, Side::Black).len() == 0{
+                                if is_in_check(&board, Side::Black){
+                                    winner = Some(true); // true for white
+                                    white_wins += 1.0;
+                                }else{
+                                    winner = None; // draw
+                                    black_wins += 0.5;
+                                    white_wins += 0.5;
+                                }
+                                game_over = true;
+                            }   
                             current_turn = if current_turn == Side::White {Side::Black} else {Side::White};
                             selected_piece = None;
                             selected_coords = None;
@@ -782,7 +864,7 @@ async fn main() {
                         last_move = Some(mv);
                         if get_all_moves(&mut board, Side::Black).len() == 0{
                             if is_in_check(&board, Side::Black){
-                                winner = Some(true); // false for black
+                                winner = Some(true); // true for white
                                 white_wins += 1.0;
                             }else{
                                 winner = None; // draw
@@ -818,6 +900,17 @@ async fn main() {
                             println!("move {}:", board.moves);
                             println!("eval: {}",minimax_ai::evaluate(&board));
                             last_move = Some(((row, col), selected_coords.unwrap()));
+                            if get_all_moves(&mut board, Side::White).len() == 0{
+                                if is_in_check(&board, Side::White){
+                                    winner = Some(false); // false for black
+                                    black_wins += 1.0;
+                                }else{
+                                    winner = None; // draw
+                                    black_wins += 0.5;
+                                    white_wins += 0.5;
+                                }
+                                game_over = true;
+                            }   
                             current_turn = if current_turn == Side::White {Side::Black} else {Side::White};
                             selected_piece = None;
                             selected_coords = None;
