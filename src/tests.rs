@@ -72,6 +72,32 @@ mod make_unmake_tests {
     fn roundtrip_from_starting_position_depth_5() {
         let mut board = new_board();
         let nodes = perft_with_undo_check(&mut board, 5);
-        assert_eq!(nodes, 4_865_609, "Depth 4 from start should be 4,865,609 nodes");
+        assert_eq!(nodes, 4_865_609, "Depth 5 from start should be 4,865,609 nodes");
+    }
+    #[test]
+    fn roundtrip_from_starting_position_depth_7() {
+        let mut board = new_board();
+        let nodes = perft_with_undo_check(&mut board, 7);
+        assert_eq!(nodes, 3_195_901_860, "Depth 5 from start should be 3,195,901,860 nodes");
+    }
+
+    fn divide_perft(board: &mut Board, depth: usize) {
+        let side = if board.white_to_move { Side::White } else { Side::Black };
+        let moves = get_all_moves(board, side);
+        let mut total = 0u64;
+        for mv in moves {
+            let undo = make_move(board, mv.0, mv.1);
+            let nodes = perft_with_undo_check(board, depth - 1);
+            undo_move(board, undo);
+            println!("{:?} -> {:?}: {}", mv.0, mv.1, nodes);
+            total += nodes;
+        }
+        println!("total: {}", total);
+    }
+
+    #[test]
+    fn divide_depth_5() {
+        let mut board = new_board();
+        divide_perft(&mut board, 5);
     }
 }

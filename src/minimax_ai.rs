@@ -1,5 +1,5 @@
 use std::any::Any;
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 use crate::Board;
 use crate::PieceType;
 use crate::Piece;
@@ -11,6 +11,7 @@ use crate::can_castle_queenside;
 use macroquad::{ prelude::*};
 use macroquad::miniquad::date;
 use crate::get_all_moves;
+use crate::get_all_captures;
 use crate::make_move;
 use crate::is_in_check;
 use crate::DEPTH;
@@ -20,11 +21,12 @@ impl Player for MinimaxAI {
     fn as_any(&self) -> &dyn Any { self }
     fn get_move(&self, board: &Board, side: Side) -> ((usize, usize), (usize, usize)) {
         let mut b = board.clone();
+        let mut best_moves: Vec<((usize, usize), (usize, usize))> = Vec::new();
+
         //transposition table
-        let mut transposition_table: HashMap<u64, TTEntry> = HashMap::new();
+        let mut transposition_table: FxHashMap<u64, TTEntry> = FxHashMap::default();
         let zobrist_table: ZobristTable = ZobristTable::new();
 
-        let mut best_move: ((usize, usize), (usize, usize)) = ((0,0), (0,0));
         let mut best_eval: i32 = if side == Side::White {i32::MIN} else {i32::MAX};
 
         rand::srand(date::now() as u64);
@@ -33,26 +35,24 @@ impl Player for MinimaxAI {
         moves.sort_by_key(|mv| { match board[mv.1.0][mv.1.1]{ Some(p) => -piece_value(p, mv.1, board.moves), None => 0}});
         for mv in moves{
             let undo = make_move(&mut b, mv.0,mv.1);
-            let eval = minimax(&mut b, self.depth.saturating_sub(1), i32::MIN, i32::MAX, &zobrist_table, &mut transposition_table);
+            let eval = minimax(&mut b, self.depth.saturating_sub(1), 1,  i32::MIN, i32::MAX, &zobrist_table, &mut transposition_table);
             undo_move(&mut b, undo);
             if side == Side::White && eval > best_eval || side == Side::Black && eval < best_eval{
                 best_eval = eval;
-                best_move = mv;
+                best_moves.clear();
+                best_moves.push(mv);
             }else if eval == best_eval{
-
-                if rand::gen_range(0, 2) == 1{
-                    best_eval = eval;
-                    best_move = mv;
-                }
+                best_moves.push(mv);
             }
         }
-        best_move
+        println!("minimax's current eval: {}", best_eval);
+        best_moves[rand::gen_range(0, best_moves.len())]
     }
 }
 
-fn minimax(board: &mut Board, depth: usize, mut alpha: i32, mut beta: i32,
+fn minimax(board: &mut Board, depth: usize, ply: i32, mut alpha: i32, mut beta: i32,
         ztable: &ZobristTable,
-        tt: &mut HashMap<u64, TTEntry>) -> i32 {
+        tt: &mut FxHashMap<u64, TTEntry>) -> i32 {
     let side = if board.white_to_move { Side::White } else { Side::Black };
     let hash = ztable.hash(board);
     let alpha_orig = alpha;
@@ -60,20 +60,18 @@ fn minimax(board: &mut Board, depth: usize, mut alpha: i32, mut beta: i32,
 
     // Only trust an entry searched at least as deep as we need.
     if let Some(entry) = tt.get(&hash) {
-    if entry.depth >= depth {
-        match entry.bound {
-            Bound::Exact => return entry.value,
-            Bound::Lower => alpha = alpha.max(entry.value),
-            Bound::Upper => beta  = beta.min(entry.value),
+        if entry.depth >= depth {
+            match entry.bound {
+                Bound::Exact => return entry.value,
+                Bound::Lower => alpha = alpha.max(entry.value),
+                Bound::Upper => beta  = beta.min(entry.value),
+            }
+            if alpha >= beta { return entry.value; }
         }
-        if alpha >= beta { return entry.value; }
-    }
-    }
+    } 
 
     if depth == 0 {
-        let eval = evaluate(board);
-        tt.insert(hash, TTEntry { depth: 0, value: eval, bound: Bound::Exact });
-        return eval;
+        return quiescence(board, ply, alpha, beta, ztable, tt);
     }
 
     let mut moves = get_all_moves(board, side);
@@ -85,11 +83,9 @@ fn minimax(board: &mut Board, depth: usize, mut alpha: i32, mut beta: i32,
     // mate check
     if moves.is_empty() {
         if is_in_check(board, side) {
-
-            let ply = DEPTH.saturating_sub(depth);
             // side to move is mated; score from White's perspective
-            return if board.white_to_move { -500000 + ply as i32 }
-                else                 {  500000 - ply as i32 };
+            return if board.white_to_move { -500000 + ply  }
+                else                 {  500000 - ply  };
         } else {
             return 0; // stalemate
         }
@@ -99,7 +95,7 @@ fn minimax(board: &mut Board, depth: usize, mut alpha: i32, mut beta: i32,
         let mut eval = i32::MIN;
         for mv in &moves {
             let undo = make_move(board, mv.0, mv.1);
-            eval = minimax(board, depth -1, alpha, beta, ztable, tt).max(eval);
+            eval = minimax(board, depth -1, ply + 1, alpha, beta, ztable, tt).max(eval);
             undo_move(board, undo);
 
             alpha = alpha.max(eval);
@@ -110,7 +106,7 @@ fn minimax(board: &mut Board, depth: usize, mut alpha: i32, mut beta: i32,
         let mut eval = i32::MAX;
         for mv in moves {
             let undo = make_move(board, mv.0, mv.1);
-            eval = minimax(board, depth - 1, alpha, beta, ztable, tt).min(eval);
+            eval = minimax(board, depth - 1, ply + 1, alpha, beta, ztable, tt).min(eval);
             undo_move(board, undo);
 
             beta = beta.min(eval);
@@ -124,6 +120,71 @@ fn minimax(board: &mut Board, depth: usize, mut alpha: i32, mut beta: i32,
             else { Bound::Exact };
     tt.insert(hash, TTEntry { depth, value, bound });
     value
+}
+
+fn quiescence(
+    board: &mut Board,
+    ply: i32,
+    mut alpha: i32,
+    mut beta: i32,
+    ztable: &ZobristTable,
+    tt: &mut FxHashMap<u64, TTEntry>,
+) -> i32 {
+    let side = if board.white_to_move { Side::White } else { Side::Black };
+    let in_check = is_in_check(board, side);
+
+    // Stand-pat — but only if we're not in check (can't "pass" out of check)
+    let stand_pat = evaluate(board);
+    if !in_check {
+        if board.white_to_move {
+            if stand_pat >= beta { return beta; }
+            if stand_pat > alpha { alpha = stand_pat; }
+        } else {
+            if stand_pat <= alpha { return alpha; }
+            if stand_pat < beta { beta = stand_pat; }
+        }
+    }
+
+    // Generate moves. If in check, search ALL moves. Otherwise only captures.
+    let mut moves = if in_check {
+        get_all_moves(board, side)
+    } else {
+        get_all_captures(board, side)  
+    };
+
+    // Mate / stalemate detection when in check with no legal moves
+    if moves.is_empty() {
+        if in_check {
+            return if board.white_to_move { -500000 + ply } else { 500000 - ply };
+        }
+        return stand_pat; // quiet position, no captures to consider
+    }
+
+    // MVV-style ordering: capture biggest victim first
+    moves.sort_by_key(|mv| match board[mv.1.0][mv.1.1] {
+        Some(p) => -piece_value(p, mv.1, board.moves),
+        None => 0,
+    });
+
+    if board.white_to_move {
+        for mv in moves {
+            let undo = make_move(board, mv.0, mv.1);
+            let score = quiescence(board, ply + 1, alpha, beta, ztable, tt);
+            undo_move(board, undo);
+            if score >= beta { return beta; }
+            if score > alpha { alpha = score; }
+        }
+        alpha
+    } else {
+        for mv in moves {
+            let undo = make_move(board, mv.0, mv.1);
+            let score = quiescence(board, ply + 1, alpha, beta, ztable, tt);
+            undo_move(board, undo);
+            if score <= alpha { return alpha; }
+            if score < beta { beta = score; }
+        }
+        beta
+    }
 }
 
 pub fn evaluate(board: &Board) -> i32{
@@ -150,8 +211,8 @@ fn piece_value(piece: Piece, coord: (usize, usize), moves: u8) -> i32{
             PieceType::Knight => return 305 + KNIGHT_TABLE[coord.0][coord.1],
             PieceType::Bishop => return 333 + BISHOP_TABLE[coord.0][coord.1],
             PieceType::Rook   => return 563 + ROOK_TABLE[coord.0][coord.1],
-            PieceType::Queen  => return 950 + QUEEN_TABLE[coord.0][coord.1],
-            PieceType::King   => if moves < 35 {return 100000 + KING_TABLE[coord.0][coord.1]} else {return 100000 + KING_TABLE_LATE_GAME[coord.0][coord.1] },
+            PieceType::Queen  => if moves < 16 {return 950 + QUEEN_TABLE_EARLY[coord.0][coord.1]} else {return 950 + QUEEN_TABLE_LATE[coord.0][coord.1]},
+            PieceType::King   => if moves < 40 {return 100000 + KING_TABLE_EARLY[coord.0][coord.1]} else {return 100000 + KING_TABLE_LATE[coord.0][coord.1] },
         };
     }else{
         match piece.piece_type {
@@ -159,8 +220,8 @@ fn piece_value(piece: Piece, coord: (usize, usize), moves: u8) -> i32{
             PieceType::Knight => return 305 + KNIGHT_TABLE[7 - coord.0][coord.1],
             PieceType::Bishop => return 333 + BISHOP_TABLE[7 - coord.0][coord.1],
             PieceType::Rook   => return 563 + ROOK_TABLE[7 - coord.0][coord.1],
-            PieceType::Queen  => return 950 + QUEEN_TABLE[7 - coord.0][coord.1],
-            PieceType::King   => if moves < 35 {return 100000 + KING_TABLE[7 - coord.0][coord.1]} else {return 100000 + KING_TABLE_LATE_GAME[7 - coord.0][coord.1] },
+            PieceType::Queen  =>  if moves < 16 {return 950 + QUEEN_TABLE_EARLY[7 - coord.0][coord.1]} else {return 950 + QUEEN_TABLE_LATE[ 7 -coord.0][coord.1]},
+            PieceType::King   => if moves < 40 {return 100000 + KING_TABLE_EARLY[7 - coord.0][coord.1]} else {return 100000 + KING_TABLE_LATE[7 - coord.0][coord.1] },
         };
     }
 
@@ -235,10 +296,10 @@ impl ZobristTable {
 
 const PAWN_TABLE: [[i32; 8]; 8] = [
     [ 0,    0,    0,    0,    0,    0,    0,    0   ],  // promotion 
-    [ 175,  175,  175,  175,  175,  175,  175,  175 ],
-    [ 25,   25,   50,   75,   75,   50,   25,   25  ],
-    [ 10,   10,   25,   60,   60,   25,   10,   10  ],
-    [ 5,    5,    20,   50,   50,   20,   5,    5   ],
+    [ 90,   90,   90,   90,   90,   90,   90,   90  ],
+    [ 25,   25,   50,   55,   55,   50,   25,   25  ],
+    [ 10,   10,   25,   50,   50,   25,   10,   10  ],
+    [ 5,    5,    25,   45,   45,   25,   5,    5   ],
     [ 5,    5,    10,   5,    5,   10,    5,    5   ],
     [ 5,    5,    5,   -10,  -10,   5,    5,    5   ],  // slight penalty for blocking center
     [ 0,    0,    0,    0,    0,    0,    0,    0   ],  // starting rank
@@ -262,7 +323,7 @@ const BISHOP_TABLE: [[i32; 8]; 8] = [
     [ -10,    5,     5,     10,    10,    5,     5,   -10 ],
     [ -10,    0,     10,    10,    10,    10,    0,   -10 ],
     [ -10,    10,    10,    10,    10,    10,    10,  -10 ],
-    [ -10,    5,     0,     0,     0,     0,     5,   -10 ],
+    [ -10,    15,     0,     0,     0,     0,    15,  -10 ],
     [ -20,   -10,   -10,   -10,   -10,   -10,   -10,  -20 ], //starting rank
 ];
 
@@ -277,18 +338,31 @@ const ROOK_TABLE: [[i32; 8]; 8] = [
     [  0,   0,   5,  10,  10,   5,   0,   0 ],  // starting rank
 ];
 
-const QUEEN_TABLE: [[i32; 8]; 8] = [
+
+
+const QUEEN_TABLE_EARLY: [[i32; 8]; 8] = [
+    [-30, -20, -20, -20, -20, -20, -20, -30], // Avoid early queen moves
+    [-20, -15, -15, -15, -15, -15, -15, -20],
+    [-20, -20, -20, -20, -20, -20, -20, -20],
+    [-20, -20, -20, -25, -25, -20, -20, -20],
+    [-20, -20, -20, -25, -25, -20, -20, -20],
+    [-10, -15, -10, -15, -15, -10, -15, -10],
+    [ -5,   5,   5,   5,   5,   5,   5,  -5],
+    [-10,   0,   0,  15,   0,   0,   0, -10], // Keep king near king to start
+];
+
+const QUEEN_TABLE_LATE: [[i32; 8]; 8] = [
     [ -20, -10, -10,  -5,  -5, -10, -10, -20 ], // avoid edges
     [ -10,   0,   0,   0,   0,   0,   0, -10 ],
     [ -10,   0,   5,   5,   5,   5,   0, -10 ],
     [  -5,   0,   5,   5,   5,   5,   0,  -5 ],
-    [   0,   0,   5,   5,   5,   5,   0,  -5 ],
+    [  -5,   0,   5,   5,   5,   5,   0,  -5 ],
     [ -10,   5,   5,   5,   5,   5,   0, -10 ],
     [ -10,   0,   5,   0,   0,   0,   0, -10 ],
     [ -20, -10, -10,  -5,  -5, -10, -10, -20 ], // staring rank
 ];
 
-const KING_TABLE: [[i32; 8]; 8] = [
+const KING_TABLE_EARLY: [[i32; 8]; 8] = [
     [ -30, -40, -40, -50, -50, -40, -40, -30 ], // RUN AWAY!!
     [ -30, -40, -40, -50, -50, -40, -40, -30 ],
     [ -30, -40, -40, -50, -50, -40, -40, -30 ],
@@ -296,10 +370,10 @@ const KING_TABLE: [[i32; 8]; 8] = [
     [ -20, -30, -30, -40, -40, -30, -30, -20 ],
     [ -10, -20, -20, -20, -20, -20, -20, -10 ],
     [  20,  20,   0,   0,   0,   0,  20,  20 ],
-    [  20,  30,  10,   0,   0,  10,  30,  20 ],  // castled positions rewarded
+    [  20,  30,  30,  10,  10,  10,  30,  20 ],  // castled positions rewarded
 ];
 
-const KING_TABLE_LATE_GAME: [[i32; 8]; 8] = [
+const KING_TABLE_LATE: [[i32; 8]; 8] = [
     [ -30, -30, -30, -30, -30, -30, -30, -30 ], // GET IN THE MIX!!
     [ -30, -10, -10, -10, -10, -10, -10, -30 ],
     [ -30, -10,   5,   5,   5,   5, -10, -30 ],

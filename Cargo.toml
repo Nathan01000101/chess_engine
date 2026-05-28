@@ -4,7 +4,8 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-macroquad = "0.4"
+macroquad = { version = "0.4", features = ["audio"]}
 rand = "0.9"
 rayon   = "1"
 dashmap = "6"
+rustc-hash = "2"
