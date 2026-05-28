@@ -11,15 +11,12 @@ use crate::WHITE_TO_MOVE;
 use crate::WHITE_LONG;
 use crate::ai::Player;
 use crate::undo_move;
-use crate::can_castle_kingside;
-use crate::can_castle_queenside;
 use macroquad::{ prelude::*};
 use macroquad::miniquad::date;
 use crate::get_all_moves;
 use crate::get_all_captures;
 use crate::make_move;
 use crate::is_in_check;
-use crate::DEPTH;
 
 pub struct MinimaxAI { pub depth: usize}
 impl Player for MinimaxAI {

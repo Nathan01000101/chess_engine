@@ -438,6 +438,27 @@ fn make_move(board: &mut Board, old: (usize, usize), new: (usize, usize)) -> Und
                 else if undo.last_move.from == (0, 7) { board.state &= !BLACK_SHORT; }
             }
         }
+
+        if let Some(piece) = undo.captured_piece{
+            if piece.piece_type == PieceType::Rook{
+                if piece.color == Side::White{
+                    if undo.last_move.to == (7, 0) && undo.previous_state & WHITE_LONG != 0{
+                        board.state ^= WHITE_LONG
+                    }
+                    else if undo.last_move.to == (7,7) && undo.previous_state & WHITE_SHORT != 0{
+                        board.state ^= WHITE_SHORT
+                    }
+                }else{
+                    if undo.last_move.to == (0, 0) && undo.previous_state & BLACK_LONG != 0{
+                        board.state ^= BLACK_LONG
+                    }
+                    else if undo.last_move.to == (0, 7) && undo.previous_state & BLACK_SHORT != 0{
+                        board.state ^= BLACK_SHORT;
+                    }
+                }
+            }
+        }
+
         board[new.0][new.1] = Some(p);
         board[old.0][old.1] = None;
         undo
@@ -806,44 +827,6 @@ fn get_all_moves(board: &mut Board, side: Side) -> Vec<((usize, usize), (usize, 
     moves
 }
 
-fn can_castle_kingside(board: &Board, side: Side) -> bool{
-    // kingside
-    let back_row = if side == Side::White { 7 } else { 0 };
-    let opposite_side = if side == Side::White {Side::Black} else {Side::White};
-    let can_king = if side == Side::White {board.state & WHITE_SHORT != 0} else {board.state & BLACK_SHORT != 0};
-    if can_king{
-        if board[back_row][6].is_none() && board[back_row][5].is_none() {
-            if !is_square_attacked_by(&board, (back_row, 6), opposite_side) 
-                && !is_square_attacked_by(&board, (back_row, 5), opposite_side) {
-                if !is_in_check(&board, side) {
-                    return true;
-                }
-            }
-        }
-    }
-
-
-    false
-}
-
-fn can_castle_queenside(board: &Board, side: Side) -> bool{
-    // kingside
-    let back_row = if side == Side::White { 7 } else { 0 };
-    let opposite_side = if side == Side::White {Side::Black} else {Side::White};
-    let can_queen = if side == Side::White {board.state & WHITE_LONG != 0} else {board.state & BLACK_LONG != 0};
-    if can_queen {
-        if board[back_row][1].is_none() && board[back_row][2].is_none() && board[back_row][3].is_none(){
-            if !is_square_attacked_by(&board, (back_row, 2), opposite_side) 
-                && !is_square_attacked_by(&board, (back_row, 3), opposite_side){
-                if !is_in_check(&board, side) {
-                    return true;
-                }
-            }
-        }    
-    }
-    false
-}
-
 fn draw_board(tile_size: f32) {
     for row in 0..8 {
         for col in 0..8 {
@@ -1004,7 +987,7 @@ async fn main() {
         
                         if get_valid_moves(&mut board, selected_coords.unwrap()).contains(&(row, col)) && board[selected_coords.unwrap().0][selected_coords.unwrap().1].unwrap().color == if board.state & WHITE_TO_MOVE != 0 {Side::White} else {Side::Black}{
                             let move_info: Undo = make_move(&mut board, selected_coords.unwrap(), (row, col));
-                            println!("move {}:", board.moves);
+                            println!("\nmove {}:", board.moves);
                             println!("eval: {}",minimax_ai::evaluate(&board));
                             last_move = Some(((row, col), selected_coords.unwrap()));
 
@@ -1061,7 +1044,7 @@ async fn main() {
                 if let Some(rx) = &thinking {
                     if let Ok(mv) = rx.try_recv() {
                         let move_info = make_move(&mut board, mv.0, mv.1);
-                        println!("move {}:", board.moves);
+                        println!("\nmove {}:", board.moves);
                         println!("eval: {}",minimax_ai::evaluate(&board));
                         last_move = Some(mv);
                         if is_in_check(&board, Side::Black){
@@ -1115,7 +1098,7 @@ async fn main() {
         
                         if get_valid_moves(&mut board, selected_coords.unwrap()).contains(&(row, col)) && board[selected_coords.unwrap().0][selected_coords.unwrap().1].unwrap().color == if board.state & WHITE_TO_MOVE != 0 {Side::White} else {Side::Black}{
                             let move_info = make_move(&mut board, selected_coords.unwrap(), (row, col));
-                            println!("move {}:", board.moves);
+                            println!("\nmove {}:", board.moves);
                             println!("eval: {}",minimax_ai::evaluate(&board));
                             last_move = Some(((row, col), selected_coords.unwrap()));
 
@@ -1173,7 +1156,7 @@ async fn main() {
                 if let Some(rx) = &thinking {
                     if let Ok(mv) = rx.try_recv() {
                         let move_info = make_move(&mut board, mv.0, mv.1);
-                        println!("move {}:", board.moves);
+                        println!("\nmove {}:", board.moves);
                         println!("eval: {}",minimax_ai::evaluate(&board));
                         last_move = Some(mv);
 
