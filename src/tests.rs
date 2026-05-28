@@ -7,7 +7,9 @@ use crate::new_board;
 
 #[cfg(test)]
 mod make_unmake_tests {
-    use super::*;
+    use crate::WHITE_TO_MOVE;
+
+use super::*;
 
     /// Walks the move tree to `depth`, asserting board equality after every make/unmake.
     /// Returns the node count (a perft result) — useful for comparing against known values.
@@ -16,7 +18,7 @@ mod make_unmake_tests {
             return 1;
         }
 
-        let side = if board.white_to_move { Side::White } else { Side::Black };
+        let side = if board.state & WHITE_TO_MOVE != 0 { Side::White } else { Side::Black };
         let moves = get_all_moves(board, side);
         let mut nodes = 0u64;
 
@@ -68,21 +70,29 @@ mod make_unmake_tests {
         assert_eq!(nodes, 197_281, "Depth 4 from start should be 197,281 nodes");
     }
 
-        #[test]
+    #[test]
     fn roundtrip_from_starting_position_depth_5() {
         let mut board = new_board();
         let nodes = perft_with_undo_check(&mut board, 5);
         assert_eq!(nodes, 4_865_609, "Depth 5 from start should be 4,865,609 nodes");
     }
+
+    #[test]
+    fn roundtrip_from_starting_position_depth_6() {
+        let mut board = new_board();
+        let nodes = perft_with_undo_check(&mut board, 6);
+        assert_eq!(nodes, 119_060_324, "Depth 6 from start should be 119,060,324 nodes");
+    }
+
     #[test]
     fn roundtrip_from_starting_position_depth_7() {
         let mut board = new_board();
         let nodes = perft_with_undo_check(&mut board, 7);
-        assert_eq!(nodes, 3_195_901_860, "Depth 5 from start should be 3,195,901,860 nodes");
+        assert_eq!(nodes, 3_195_901_860, "Depth 7 from start should be 3,195,901,860 nodes");
     }
 
     fn divide_perft(board: &mut Board, depth: usize) {
-        let side = if board.white_to_move { Side::White } else { Side::Black };
+        let side = if board.state & WHITE_TO_MOVE != 0 { Side::White } else { Side::Black };
         let moves = get_all_moves(board, side);
         let mut total = 0u64;
         for mv in moves {

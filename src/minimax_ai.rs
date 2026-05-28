@@ -1,9 +1,14 @@
 use std::any::Any;
 use rustc_hash::FxHashMap;
+use crate::BLACK_SHORT;
+use crate::BLACK_LONG;
 use crate::Board;
 use crate::PieceType;
 use crate::Piece;
 use crate::Side;
+use crate::WHITE_SHORT;
+use crate::WHITE_TO_MOVE;
+use crate::WHITE_LONG;
 use crate::ai::Player;
 use crate::undo_move;
 use crate::can_castle_kingside;
@@ -53,7 +58,7 @@ impl Player for MinimaxAI {
 fn minimax(board: &mut Board, depth: usize, ply: i32, mut alpha: i32, mut beta: i32,
         ztable: &ZobristTable,
         tt: &mut FxHashMap<u64, TTEntry>) -> i32 {
-    let side = if board.white_to_move { Side::White } else { Side::Black };
+    let side = if board.state & WHITE_TO_MOVE != 0 { Side::White } else { Side::Black };
     let hash = ztable.hash(board);
     let alpha_orig = alpha;
     let beta_orig = beta;
@@ -84,14 +89,14 @@ fn minimax(board: &mut Board, depth: usize, ply: i32, mut alpha: i32, mut beta: 
     if moves.is_empty() {
         if is_in_check(board, side) {
             // side to move is mated; score from White's perspective
-            return if board.white_to_move { -500000 + ply  }
+            return if board.state & WHITE_TO_MOVE != 0 { -500000 + ply  }
                 else                 {  500000 - ply  };
         } else {
             return 0; // stalemate
         }
     }
 
-    let value = if board.white_to_move {
+    let value = if board.state & WHITE_TO_MOVE != 0 {
         let mut eval = i32::MIN;
         for mv in &moves {
             let undo = make_move(board, mv.0, mv.1);
@@ -130,13 +135,13 @@ fn quiescence(
     ztable: &ZobristTable,
     tt: &mut FxHashMap<u64, TTEntry>,
 ) -> i32 {
-    let side = if board.white_to_move { Side::White } else { Side::Black };
+    let side = if board.state & WHITE_TO_MOVE != 0 { Side::White } else { Side::Black };
     let in_check = is_in_check(board, side);
 
     // Stand-pat — but only if we're not in check (can't "pass" out of check)
     let stand_pat = evaluate(board);
     if !in_check {
-        if board.white_to_move {
+        if side == Side::White {
             if stand_pat >= beta { return beta; }
             if stand_pat > alpha { alpha = stand_pat; }
         } else {
@@ -155,7 +160,7 @@ fn quiescence(
     // Mate / stalemate detection when in check with no legal moves
     if moves.is_empty() {
         if in_check {
-            return if board.white_to_move { -500000 + ply } else { 500000 - ply };
+            return if side == Side::White { -500000 + ply } else { 500000 - ply };
         }
         return stand_pat; // quiet position, no captures to consider
     }
@@ -166,7 +171,7 @@ fn quiescence(
         None => 0,
     });
 
-    if board.white_to_move {
+    if side == Side::White {
         for mv in moves {
             let undo = make_move(board, mv.0, mv.1);
             let score = quiescence(board, ply + 1, alpha, beta, ztable, tt);
@@ -276,16 +281,16 @@ impl ZobristTable {
             h ^= self.pieces[p.piece_type as usize][p.color as usize][sq];
         }
     }
-    if !board.white_to_move { h ^= self.black_to_move; }
+    if !board.state & WHITE_TO_MOVE == 0 { h ^= self.black_to_move; }
 
     if let Some(target) = board.en_passant_target {
-        h ^= self.en_passant_file[target.1];
+        h ^= self.en_passant_file[target.1 as usize];
     }
 
-    if can_castle_kingside(board, Side::White)  { h ^= self.castling[0]; }
-    if can_castle_queenside(board, Side::White) { h ^= self.castling[1]; }
-    if can_castle_kingside(board, Side::Black)  { h ^= self.castling[2]; }
-    if can_castle_queenside(board, Side::Black) { h ^= self.castling[3]; }
+    if board.state & WHITE_SHORT != 0  { h ^= self.castling[0]; }
+    if board.state & WHITE_LONG != 0 { h ^= self.castling[1]; }
+    if board.state & BLACK_SHORT != 0 { h ^= self.castling[2]; }
+    if board.state & BLACK_LONG != 0 { h ^= self.castling[3]; }
 
     h
 }
