@@ -44,7 +44,7 @@ impl Player for MinimaxAI {
             if let Some(mvs) = possible{
                 if mvs.len() > 0{
                     let mv = mvs.get(rand::gen_range(0, mvs.len())).unwrap();
-                    println!("found book");
+                    println!("minimax AI found book move");
                     return ((mv.0.0 as usize, mv.0.1 as usize), (mv.1.0 as usize, mv.1.1 as usize));
                 }
             }
@@ -75,7 +75,7 @@ impl Player for MinimaxAI {
                 best_moves.push(mv);
             }
         }
-        println!("minimax's current eval: {}", best_eval);
+        println!("minimax's thinks the evaluation is {}cp", best_eval);
         best_moves[rand::gen_range(0, best_moves.len())]
     }
 }
