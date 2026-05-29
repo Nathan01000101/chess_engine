@@ -19,7 +19,7 @@ mod minimax_ai;
 mod tests;
 
 const WINDOW_SIZE: f32 = 600.0;
-pub const DEPTH: usize = 6;
+pub const DEPTH: usize = 5;
 
 // for accessing board struct
 const WHITE_SHORT:  u8 = 0b00001;
@@ -842,14 +842,16 @@ fn draw_board(tile_size: f32) {
 
 fn draw_moves(tile_size: f32, board: &mut Board, selected_piece: (usize, usize), flipped: bool){
     let moves: Vec<(usize, usize)> = get_valid_moves(board, selected_piece);
-    let color = Color::from_rgba(100, 0, 0, 100);
+    let captures = get_capture_moves(board, selected_piece);
+    let color = Color::from_rgba(100, 50, 50, 100);
     for mv in moves {
-        if flipped{
-            draw_circle((7 - mv.1) as f32 * tile_size + tile_size*0.5, ( 7 - mv.0) as f32 * tile_size + tile_size * 0.5, tile_size / 2.5, color);
+        let col = if flipped {7 - mv.1} else {mv.1};
+
+        if captures.contains(&mv) && board[mv.0][mv.1].unwrap().color != board[selected_piece.0][selected_piece.1].unwrap().color{
+            draw_circle_lines(col as f32 * tile_size + tile_size*0.5, mv.0 as f32 * tile_size + tile_size*0.5, tile_size/3.0, tile_size/8.0, color);
         }else{
-            draw_circle(mv.1 as f32 * tile_size + tile_size*0.5, mv.0 as f32 * tile_size + tile_size*0.5, tile_size/2.5, color);
+            draw_circle(col as f32 * tile_size + tile_size*0.5, mv.0 as f32 * tile_size + tile_size*0.5, tile_size/4.0, color);
         }
-        
     }
 }
 
