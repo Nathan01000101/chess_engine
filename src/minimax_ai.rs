@@ -1,5 +1,7 @@
 use std::any::Any;
 use rustc_hash::FxHashMap;
+use std::fs::File;
+use std::io::{BufRead, BufReader};
 use crate::BLACK_SHORT;
 use crate::BLACK_LONG;
 use crate::Board;
@@ -17,11 +19,37 @@ use crate::get_all_moves;
 use crate::get_all_captures;
 use crate::make_move;
 use crate::is_in_check;
+use crate::to_fen;
 
-pub struct MinimaxAI { pub depth: usize}
+pub struct MinimaxAI { pub depth: usize, opening_book: FxHashMap<String, Vec<((u8, u8), (u8, u8))>> }
+
+impl MinimaxAI {
+    pub fn new(depth: usize) -> Self{
+        Self {
+            depth,
+            opening_book: build_book(),
+        }
+    }
+}
 impl Player for MinimaxAI {
     fn as_any(&self) -> &dyn Any { self }
     fn get_move(&self, board: &Board, side: Side) -> ((usize, usize), (usize, usize)) {
+
+        // before calculating move manually, check if position exists in our opening book
+        let full_fen: String = to_fen(board);
+        let parts: Vec<&str> = full_fen.split_whitespace().collect();
+        let fen = parts[..4].join(" ");
+        if self.opening_book.contains_key(&fen){
+            let possible = self.opening_book.get(&fen);
+            if let Some(mvs) = possible{
+                if mvs.len() > 0{
+                    let mv = mvs.get(rand::gen_range(0, mvs.len())).unwrap();
+                    println!("found book");
+                    return ((mv.0.0 as usize, mv.0.1 as usize), (mv.1.0 as usize, mv.1.1 as usize));
+                }
+            }
+        }
+
         let mut b = board.clone();
         let mut best_moves: Vec<((usize, usize), (usize, usize))> = Vec::new();
 
@@ -227,6 +255,49 @@ fn piece_value(piece: Piece, coord: (usize, usize), moves: u8) -> i32{
         };
     }
 
+}
+
+fn build_book() -> FxHashMap<String, Vec<((u8, u8), (u8, u8))>>{
+    let mut book: FxHashMap<String, Vec<((u8, u8), (u8, u8))>> = FxHashMap::default();
+
+    let file = File::open("assets/book.txt").expect("engine's opening book is missing");
+    let reader = BufReader::new(file);
+
+    let mut last_fen = String::from("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
+    for line in reader.lines() {
+        let line = line.expect("failed to read line"); 
+        if line.is_empty() || line.starts_with('#'){
+            continue;
+        }
+        
+        if line.starts_with('$'){
+            let raw = line.replace("$", "");
+            let parts: Vec<&str> = raw.split_whitespace().collect();
+            if parts.len() < 4 {
+                continue; // skip malformed
+            }
+            last_fen = parts[..4].join(" ");
+            continue;
+        }
+
+        let parts: Vec<&str> = line.split(',').map(|s| s.trim()).collect();
+        if parts.len() == 2 {
+            let from = square_to_coord(parts[0]);
+            let to = square_to_coord(parts[1]);
+
+            book.entry(last_fen.clone())
+                .or_insert_with(Vec::new)
+                .push((from, to));
+        }
+    }
+    book
+}
+
+fn square_to_coord(sq: &str) -> (u8, u8) {
+    let bytes = sq.as_bytes();
+    let col = bytes[0] - b'a';        // 'a' -> 0, 'h' -> 7
+    let row = 8 - (bytes[1] - b'0');  // '1' -> 7, '8' -> 0
+    (row, col)
 }
 
 #[derive(Clone, Copy)]

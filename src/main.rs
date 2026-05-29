@@ -933,14 +933,14 @@ async fn main() {
     let player1: Arc<dyn Player + Send + Sync> = match type1.as_str() {
         "human"     => Arc::new(HumanPlayer),
         "random"    => Arc::new(RandomAI),
-        "minimax"   => Arc::new(MinimaxAI { depth: DEPTH }),
+        "minimax"   => Arc::new(MinimaxAI::new(DEPTH)),
         _           => panic!("unknown player type: {type1}"),
     };
 
     let player2: Arc<dyn Player + Send + Sync> = match type2.as_str() {
         "human"     => Arc::new(HumanPlayer),
         "random"    => Arc::new(RandomAI),
-        "minimax"   => Arc::new(MinimaxAI { depth: DEPTH }),
+        "minimax"   => Arc::new(MinimaxAI::new(DEPTH)),
         _           => panic!("unknown player type: {type2}"),
     };
 
