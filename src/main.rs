@@ -19,7 +19,7 @@ mod minimax_ai;
 mod tests;
 
 const WINDOW_SIZE: f32 = 600.0;
-pub const DEPTH: usize = 5;
+pub const DEPTH: usize = 6;
 
 // for accessing board struct
 const WHITE_SHORT:  u8 = 0b00001;

@@ -237,20 +237,20 @@ pub fn evaluate(board: &Board) -> i32{
 fn piece_value(piece: Piece, coord: (usize, usize), moves: u8) -> i32{
     if piece.color == Side::White{
         match piece.piece_type {
-            PieceType::Pawn   => return 100 + PAWN_TABLE[coord.0][coord.1],
-            PieceType::Knight => return 305 + KNIGHT_TABLE[coord.0][coord.1],
-            PieceType::Bishop => return 333 + BISHOP_TABLE[coord.0][coord.1],
-            PieceType::Rook   => return 563 + ROOK_TABLE[coord.0][coord.1],
-            PieceType::Queen  => if moves < 16 {return 950 + QUEEN_TABLE_EARLY[coord.0][coord.1]} else {return 950 + QUEEN_TABLE_LATE[coord.0][coord.1]},
+            PieceType::Pawn   => if moves < 60 {return 100 + PAWN_TABLE[coord.0][coord.1]}          else {return 100 + PAWN_TABLE_LATE[coord.0][coord.1]},
+            PieceType::Knight => if moves < 55 {return 305 + KNIGHT_TABLE[coord.0][coord.1]}        else {return 275 + KNIGHT_TABLE[coord.0][coord.1]},
+            PieceType::Bishop => if moves < 50 { return 333 + BISHOP_TABLE[coord.0][coord.1] }      else {return 350 + BISHOP_TABLE_LATE[coord.0][coord.1]},
+            PieceType::Rook   => if moves < 60 {return 563 + ROOK_TABLE[coord.0][coord.1]}          else {return 570 + ROOK_TABLE_LATE[coord.0][coord.1]},
+            PieceType::Queen  => if moves < 16 {return 950 + QUEEN_TABLE_EARLY[coord.0][coord.1]}   else {return 950 + QUEEN_TABLE_LATE[coord.0][coord.1]},
             PieceType::King   => if moves < 40 {return 100000 + KING_TABLE_EARLY[coord.0][coord.1]} else {return 100000 + KING_TABLE_LATE[coord.0][coord.1] },
         };
     }else{
         match piece.piece_type {
-            PieceType::Pawn   => return 100 + PAWN_TABLE[7 - coord.0][coord.1],
-            PieceType::Knight => return 305 + KNIGHT_TABLE[7 - coord.0][coord.1],
-            PieceType::Bishop => return 333 + BISHOP_TABLE[7 - coord.0][coord.1],
-            PieceType::Rook   => return 563 + ROOK_TABLE[7 - coord.0][coord.1],
-            PieceType::Queen  =>  if moves < 16 {return 950 + QUEEN_TABLE_EARLY[7 - coord.0][coord.1]} else {return 950 + QUEEN_TABLE_LATE[ 7 -coord.0][coord.1]},
+            PieceType::Pawn   => if moves < 60 {return 100 + PAWN_TABLE[7 - coord.0][coord.1]}          else {return 100 + PAWN_TABLE_LATE[7 - coord.0][coord.1]},
+            PieceType::Knight => if moves < 55 {return 305 + KNIGHT_TABLE[7 - coord.0][coord.1]}        else {return 250 + KNIGHT_TABLE[7 - coord.0][coord.1]},
+            PieceType::Bishop => if moves < 50 { return 333 + BISHOP_TABLE[7 - coord.0][coord.1] }      else {return 350 + BISHOP_TABLE_LATE[7 - coord.0][coord.1]},
+            PieceType::Rook   => if moves < 60 {return 563 + ROOK_TABLE[7 - coord.0][coord.1]}          else {return 570 + ROOK_TABLE_LATE[7 - coord.0][coord.1]},
+            PieceType::Queen  => if moves < 16 {return 950 + QUEEN_TABLE_EARLY[7 - coord.0][coord.1]}   else {return 950 + QUEEN_TABLE_LATE[7 - coord.0][coord.1]},
             PieceType::King   => if moves < 40 {return 100000 + KING_TABLE_EARLY[7 - coord.0][coord.1]} else {return 100000 + KING_TABLE_LATE[7 - coord.0][coord.1] },
         };
     }
@@ -378,6 +378,17 @@ const PAWN_TABLE: [[i32; 8]; 8] = [
     [ 0,    0,    0,    0,    0,    0,    0,    0   ],  // starting rank
 ];
 
+const PAWN_TABLE_LATE: [[i32; 8]; 8] = [
+    [   0,    0,    0,    0,    0,    0,    0,    0  ],  // PROMOTE PROMOTE PROMOTE
+    [ 150,  150,  150,  150,  150,  150,  150,  150  ],  // 
+    [  90,   90,   90,   90,   90,   90,   90,   90  ],  // 
+    [  50,   50,   50,   50,   50,   50,   50,   50  ],  // 
+    [  25,   25,   25,   25,   25,   25,   25,   25  ],  // 
+    [  10,   10,   10,   10,   10,   10,   10,   10  ],  // 
+    [   5,    5,    5,    5,    5,    5,    5,    5  ],  // 
+    [   0,    0,    0,    0,    0,    0,    0,    0  ],  // starting rank
+];
+
 const KNIGHT_TABLE: [[i32; 8]; 8] = [
     [ -50,    -30,  -30,   -30,  -30,   -30,   -30,  -50  ],  // avoid edges
     [ -50,     0,    0,     5,    5,     0,     0,   -50  ],
@@ -400,8 +411,19 @@ const BISHOP_TABLE: [[i32; 8]; 8] = [
     [ -20,   -10,   -10,   -10,   -10,   -10,   -10,  -20 ], //starting rank
 ];
 
+const BISHOP_TABLE_LATE: [[i32; 8]; 8] = [
+    [ -10,  -5,  -5,  -5,  -5,  -5,  -5, -10 ],  // less harsh edge penalty
+    [  -5,   5,   5,   5,   5,   5,   5,  -5 ],
+    [  -5,   5,  10,  10,  10,  10,   5,  -5 ],
+    [  -5,   5,  10,  15,  15,  10,   5,  -5 ],
+    [  -5,   5,  10,  15,  15,  10,   5,  -5 ],
+    [  -5,   5,  10,  10,  10,  10,   5,  -5 ],
+    [  -5,   5,   5,   5,   5,   5,   5,  -5 ],
+    [ -10,  -5,  -5,  -5,  -5,  -5,  -5, -10 ], 
+];
+
 const ROOK_TABLE: [[i32; 8]; 8] = [
-    [  0,   0,   0,   0,   0,   0,   0,   0 ],  // 8th rank
+    [  0,   0,   0,   0,   0,   0,   0,   0 ], 
     [ 10,  15,  15,  15,  15,  15,  15,  10 ],  // 7th rank bonus
     [ -5,   0,   0,   0,   0,   0,   0,  -5 ],
     [ -5,   0,   0,   0,   0,   0,   0,  -5 ],
@@ -411,6 +433,16 @@ const ROOK_TABLE: [[i32; 8]; 8] = [
     [  0,   0,   5,  10,  10,   5,   0,   0 ],  // starting rank
 ];
 
+const ROOK_TABLE_LATE: [[i32; 8]; 8] = [
+    [  5,   5,   5,   5,   5,   5,   5,   5 ],  
+    [ 15,  20,  20,  20,  20,  20,  20,  15 ], 
+    [  0,   5,   5,   5,   5,   5,   5,   0 ],
+    [  0,   5,  10,  10,  10,  10,   5,   0 ],
+    [  0,   5,  10,  10,  10,  10,   5,   0 ],
+    [  0,   5,   5,  10,  10,   5,   5,   0 ],
+    [  0,   5,   5,   5,   5,   5,   5,   0 ],
+    [  0,   5,   5,   5,   5,   5,   5,   0 ],  // starting rank 
+];
 
 
 const QUEEN_TABLE_EARLY: [[i32; 8]; 8] = [
