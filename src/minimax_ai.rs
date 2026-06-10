@@ -2,6 +2,7 @@ use std::any::Any;
 use rustc_hash::FxHashMap;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
+use std::time::{Duration, Instant};
 use crate::BLACK_SHORT;
 use crate::BLACK_LONG;
 use crate::Board;
@@ -51,7 +52,7 @@ impl Player for MinimaxAI {
         }
 
         let mut b = board.clone();
-        let mut best_moves: Vec<((usize, usize), (usize, usize))> = Vec::new();
+        let mut best_move: ((usize, usize), (usize, usize)) = ((9,9), (9,9));
 
         //transposition table
         let mut transposition_table: FxHashMap<u64, TTEntry> = FxHashMap::default();
@@ -59,24 +60,46 @@ impl Player for MinimaxAI {
 
         let mut best_eval: i32 = if side == Side::White {i32::MIN} else {i32::MAX};
 
+        let mut alpha = i32::MIN;
+        let mut beta = i32::MAX;
+
         rand::srand(date::now() as u64);
         let mut moves = get_all_moves(&mut b, side);
+
         // move ordering
-        moves.sort_by_key(|mv| { match board[mv.1.0][mv.1.1]{ Some(p) => -piece_value(p, mv.1, board.moves), None => 0}});
+        // victim_value * 10 - attacker_value
+        moves.sort_by_key(|mv| {
+            match board[mv.1.0][mv.1.1] {
+                Some(victim) => {
+                    let attacker_val = match board[mv.0.0][mv.0.1] {
+                        Some(a) => material_value(a.piece_type),
+                        None => 0,
+                    };
+                    -(material_value(victim.piece_type) * 10 - attacker_val)
+                }
+                None => 0,
+            }
+        });
+
         for mv in moves{
             let undo = make_move(&mut b, mv.0,mv.1);
-            let eval = minimax(&mut b, self.depth.saturating_sub(1), 1,  i32::MIN, i32::MAX, &zobrist_table, &mut transposition_table);
+            let eval = minimax(&mut b, self.depth.saturating_sub(1), 1,  alpha, beta, &zobrist_table, &mut transposition_table);
+
+            // alpha - beta pruning
+            if side == Side::White {
+                alpha = alpha.max(eval);
+            } else {
+                beta = beta.min(eval);
+            }
+        
             undo_move(&mut b, undo);
             if side == Side::White && eval > best_eval || side == Side::Black && eval < best_eval{
                 best_eval = eval;
-                best_moves.clear();
-                best_moves.push(mv);
-            }else if eval == best_eval{
-                best_moves.push(mv);
+                best_move = mv;
             }
         }
         println!("minimax's thinks the evaluation is {}cp", best_eval);
-        best_moves[rand::gen_range(0, best_moves.len())]
+        best_move
     }
 }
 
@@ -105,9 +128,19 @@ fn minimax(board: &mut Board, depth: usize, ply: i32, mut alpha: i32, mut beta: 
     }
 
     let mut moves = get_all_moves(board, side);
-    moves.sort_by_key(|mv| match board[mv.1.0][mv.1.1] {
-    Some(p) => -piece_value(p, mv.1, board.moves),
-    None => 0,
+    // move ordering
+    // victim value * 10 - attacker value
+    moves.sort_by_key(|mv| {
+        match board[mv.1.0][mv.1.1] {
+            Some(victim) => {
+                let attacker_val = match board[mv.0.0][mv.0.1] {
+                    Some(a) => material_value(a.piece_type),
+                    None => 0,
+                };
+                -(material_value(victim.piece_type) * 10 - attacker_val)
+            }
+            None => 0,
+        }
     });
 
     // mate check
@@ -256,6 +289,18 @@ fn piece_value(piece: Piece, coord: (usize, usize), moves: u8) -> i32{
     }
 
 }
+
+fn material_value(p_type: PieceType) -> i32{
+    match p_type {
+            PieceType::Pawn   => 100,
+            PieceType::Knight => 300,
+            PieceType::Bishop => 300,
+            PieceType::Rook   => 500,
+            PieceType::Queen  => 900,
+            PieceType::King   => 0
+    }
+}
+
 
 fn build_book() -> FxHashMap<String, Vec<((u8, u8), (u8, u8))>>{
     let mut book: FxHashMap<String, Vec<((u8, u8), (u8, u8))>> = FxHashMap::default();
@@ -419,7 +464,7 @@ const BISHOP_TABLE_LATE: [[i32; 8]; 8] = [
     [  -5,   5,  10,  15,  15,  10,   5,  -5 ],
     [  -5,   5,  10,  10,  10,  10,   5,  -5 ],
     [  -5,   5,   5,   5,   5,   5,   5,  -5 ],
-    [ -10,  -5,  -5,  -5,  -5,  -5,  -5, -10 ], 
+    [ -10,  -5, -15,  -5,  -5, -15,  -5, -10 ], 
 ];
 
 const ROOK_TABLE: [[i32; 8]; 8] = [
@@ -464,7 +509,7 @@ const QUEEN_TABLE_LATE: [[i32; 8]; 8] = [
     [  -5,   0,   5,   5,   5,   5,   0,  -5 ],
     [ -10,   5,   5,   5,   5,   5,   0, -10 ],
     [ -10,   0,   5,   0,   0,   0,   0, -10 ],
-    [ -20, -10, -10,  -5,  -5, -10, -10, -20 ], // staring rank
+    [ -20, -10, -10, -15,  -5, -10, -10, -20 ], // staring rank
 ];
 
 const KING_TABLE_EARLY: [[i32; 8]; 8] = [

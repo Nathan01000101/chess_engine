@@ -848,7 +848,7 @@ fn draw_moves(tile_size: f32, board: &mut Board, selected_piece: (usize, usize),
         let col = if flipped {7 - mv.1} else {mv.1};
         let row = if flipped {7 - mv.0} else {mv.0};
 
-        if captures.contains(&mv) && board[mv.0][mv.1].unwrap().color != board[selected_piece.0][selected_piece.1].unwrap().color{
+        if captures.contains(&mv){
             draw_circle_lines(col as f32 * tile_size + tile_size*0.5, row as f32 * tile_size + tile_size*0.5, tile_size/3.0, tile_size/8.0, color);
         }else{
             draw_circle(col as f32 * tile_size + tile_size*0.5, row as f32 * tile_size + tile_size*0.5, tile_size/4.0, color);
