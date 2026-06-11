@@ -9,7 +9,7 @@ use std::time::Duration;
 use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver};
 use std::ops::{Index, IndexMut};
-use std::thread;
+use std::thread::{self, current};
 use std::env;
 
 mod ai;
@@ -647,7 +647,7 @@ fn is_on_ray_from(king: (usize, usize), sq: (usize, usize)) -> bool {
 }
 
 // returns all valid moves for a piece 
-fn get_valid_moves(board: &mut Board, coord: (usize, usize) ) -> Vec<(usize, usize)> {
+fn get_valid_moves(board: &mut Board, coord: (usize, usize), currently_in_check: bool) -> Vec<(usize, usize)> {
     if board[coord.0][coord.1].is_none() {return Vec::new()}
     let piece = board[coord.0][coord.1].unwrap();
     let mut not_checked = Vec::with_capacity(28);
@@ -699,13 +699,9 @@ fn get_valid_moves(board: &mut Board, coord: (usize, usize) ) -> Vec<(usize, usi
     };
 
     // Hoisted out of the loop: these don't change as we iterate destinations.
-    let currently_in_check = is_in_check(board, moving_color);
     let piece_is_king = piece.piece_type == PieceType::King;
     let piece_on_king_ray = is_on_ray_from(king_sq, coord);
 
-    // En passant is a special case: removing the captured pawn can expose
-    // the king along the rank even if the moving pawn wasn't pinned.
-    // We detect it per-destination since it depends on `to`.
     let ep_target = board.en_passant_target;
 
     for m in not_checked {
@@ -737,6 +733,12 @@ fn get_valid_moves(board: &mut Board, coord: (usize, usize) ) -> Vec<(usize, usi
         }
     }
     checked
+}
+
+fn get_valid_moves_standalone(board: &mut Board, coord: (usize, usize)) -> Vec<(usize, usize)> {
+    let piece = match board[coord.0][coord.1] { Some(p) => p, None => return Vec::new() };
+    let in_check = is_in_check(board, piece.color);
+    get_valid_moves(board, coord, in_check)
 }
 
 
@@ -812,12 +814,13 @@ fn get_all_captures(board: &mut Board, side: Side) -> Vec<((usize, usize), (usiz
 // gets all moves that a side can make ((from), (to))
 fn get_all_moves(board: &mut Board, side: Side) -> Vec<((usize, usize), (usize, usize))>{
     let mut moves: Vec<((usize, usize), (usize, usize))> = Vec::with_capacity(218);
+    let currently_in_check = is_in_check(board, side);
     for i in 0..64 {
         let r = i / 8;
         let c = i % 8;
         if let Some(p) = board[r][c] {
             if p.color == side {
-                for mv in get_valid_moves(board, (r, c)) {
+                for mv in get_valid_moves(board, (r, c), currently_in_check) {
                     moves.push(((r, c), mv));
                 }
             }
@@ -841,7 +844,7 @@ fn draw_board(tile_size: f32) {
 }
 
 fn draw_moves(tile_size: f32, board: &mut Board, selected_piece: (usize, usize), flipped: bool){
-    let moves: Vec<(usize, usize)> = get_valid_moves(board, selected_piece);
+    let moves: Vec<(usize, usize)> = get_valid_moves_standalone(board, selected_piece);
     let captures = get_capture_moves(board, selected_piece);
     let color = Color::from_rgba(100, 50, 50, 100);
     for mv in moves {
@@ -1009,7 +1012,7 @@ async fn main() {
                         }
                     }else{
         
-                        if get_valid_moves(&mut board, selected_coords.unwrap()).contains(&(row, col)) && board[selected_coords.unwrap().0][selected_coords.unwrap().1].unwrap().color == if board.state & WHITE_TO_MOVE != 0 {Side::White} else {Side::Black}{
+                        if get_valid_moves_standalone(&mut board, selected_coords.unwrap()).contains(&(row, col)) && board[selected_coords.unwrap().0][selected_coords.unwrap().1].unwrap().color == if board.state & WHITE_TO_MOVE != 0 {Side::White} else {Side::Black}{
                             let move_info: Undo = make_move(&mut board, selected_coords.unwrap(), (row, col));
                             println!("\nmove {}:", board.moves);
                             println!("eval: {}",minimax_ai::evaluate(&board));
@@ -1120,8 +1123,8 @@ async fn main() {
                         }
                     }else{
         
-                        if get_valid_moves(&mut board, selected_coords.unwrap()).contains(&(row, col)) && board[selected_coords.unwrap().0][selected_coords.unwrap().1].unwrap().color == if board.state & WHITE_TO_MOVE != 0 {Side::White} else {Side::Black}{
-                            let move_info = make_move(&mut board, selected_coords.unwrap(), (row, col));
+                        if get_valid_moves_standalone(&mut board, selected_coords.unwrap()).contains(&(row, col)) && board[selected_coords.unwrap().0][selected_coords.unwrap().1].unwrap().color == if board.state & WHITE_TO_MOVE != 0 {Side::White} else {Side::Black}{
+                            let move_info= make_move(&mut board, selected_coords.unwrap(), (row, col));
                             println!("\nmove {}:", board.moves);
                             println!("eval: {}",minimax_ai::evaluate(&board));
                             last_move = Some(((row, col), selected_coords.unwrap()));

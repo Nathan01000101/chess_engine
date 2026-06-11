@@ -3,7 +3,7 @@ use std::thread;
 use std::time::Duration;
 use macroquad::{ prelude::*};
 use macroquad::miniquad::date;
-use crate::Board;
+use crate::{Board, get_valid_moves_standalone};
 use crate::Side;
 use crate::ai::Player;
 use crate::get_valid_moves;
@@ -23,7 +23,7 @@ impl Player for RandomAI {
             let c = i % 8;
             if let Some(p) = board[r][c] {
                 if p.color == side {
-                    for mv in get_valid_moves(&mut b, (r, c)) {
+                    for mv in get_valid_moves_standalone(&mut b, (r, c)) {
                         moves.push(((r, c), mv));
                     }
                 }

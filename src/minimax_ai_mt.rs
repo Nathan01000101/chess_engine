@@ -1,8 +1,10 @@
 use std::any::Any;
 use rustc_hash::FxHashMap;
+use rustc_hash::FxBuildHasher;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
-use std::sync::Mutex;
+use rayon::prelude::*;
+use dashmap::DashMap;
 use crate::BLACK_SHORT;
 use crate::BLACK_LONG;
 use crate::Board;
@@ -22,32 +24,23 @@ use crate::make_move;
 use crate::is_in_check;
 use crate::to_fen;
 
-pub struct MinimaxAI {
-    pub depth: usize, 
-    opening_book: FxHashMap<String, Vec<((u8, u8), (u8, u8))>>,
-    zobrist: ZobristTable,
-    tt: Mutex<FxHashMap<u64, TTEntry>>,    
-    }
+// Shared, concurrent transposition table. Keys are already Zobrist hashes,
+// so we use the fast FxBuildHasher rather than the default SipHash.
+type TranspositionTable = DashMap<u64, TTEntry, FxBuildHasher>;
 
-impl MinimaxAI {
+pub struct MinimaxAI_MT { pub depth: usize, opening_book: FxHashMap<String, Vec<((u8, u8), (u8, u8))>> }
+
+impl MinimaxAI_MT {
     pub fn new(depth: usize) -> Self{
-        rand::srand(date::now() as u64);
         Self {
             depth,
             opening_book: build_book(),
-            zobrist: ZobristTable::new(),
-            tt: Mutex::new(FxHashMap::default()),
         }
     }
 }
-impl Player for MinimaxAI {
+impl Player for MinimaxAI_MT {
     fn as_any(&self) -> &dyn Any { self }
     fn get_move(&self, board: &Board, side: Side) -> ((usize, usize), (usize, usize)) {
-
-        // cap transposition table growth
-        if self.tt.lock().unwrap().len() > 20_000_000 {   
-            self.tt.lock().unwrap().clear();
-        }
 
         // before calculating move manually, check if position exists in our opening book
         let full_fen: String = to_fen(board);
@@ -64,67 +57,91 @@ impl Player for MinimaxAI {
             }
         }
 
-        let mut tt_guard = self.tt.lock().unwrap();
-        let tt: &mut FxHashMap<u64, TTEntry> = &mut *tt_guard;
-
-        let mut b = board.clone();
-        let mut best_move: ((usize, usize), (usize, usize)) = ((9,9), (9,9));
-
-        let mut best_eval: i32 = if side == Side::White {i32::MIN} else {i32::MAX};
-
-        let mut alpha = i32::MIN;
-        let mut beta = i32::MAX;
-
+        // Seed the global RNG once, on this (single) thread, before any parallel
+        // work. macroquad's rand is a global and is NOT safe to call from the
+        // rayon workers — keep all rand:: usage out of the parallel section.
         rand::srand(date::now() as u64);
+
+        let mut b = *board;
+
+        // Built once, shared immutably across all worker threads.
+        let zobrist: ZobristTable = ZobristTable::new();
+
+        // One TT shared across every root subtree. DashMap is sharded + lockless
+        // for our purposes: entries are written atomically (no torn reads), and
+        // the `entry.depth >= depth` gate on the read side means a stale or
+        // clobbered entry only ever wastes work, never corrupts a result.
+        let tt: TranspositionTable = DashMap::with_hasher(FxBuildHasher::default());
+
         let mut moves = get_all_moves(&mut b, side);
 
-        // move ordering
-        // victim_value * 10 - attacker_value
-        moves.sort_by_key(|mv| {
-            match board[mv.1.0][mv.1.1] {
-                Some(victim) => {
-                    let attacker_val = match board[mv.0.0][mv.0.1] {
-                        Some(a) => material_value(a.piece_type),
-                        None => 0,
-                    };
-                    -(material_value(victim.piece_type) * 10 - attacker_val)
-                }
-                None => 0,
-            }
+        // Caller (main loop) is responsible for detecting game over before
+        // asking the AI to move. Guard anyway so we panic with a clear message
+        // instead of an opaque rand::gen_range(0, 0) on an empty best list.
+        if moves.is_empty() {
+            panic!("get_move called with no legal moves (checkmate/stalemate)");
+        }
+
+        // root move ordering: try captures of valuable pieces first
+        moves.sort_by_key(|mv| match board[mv.1.0][mv.1.1] {
+            Some(p) => -piece_value(p, mv.1, board.moves),
+            None => 0,
         });
 
-        for mv in moves{
-            let undo = make_move(&mut b, mv.0,mv.1);
-            let eval = minimax(&mut b, self.depth.saturating_sub(1), 1,  alpha, beta, &self.zobrist, tt);
+        let depth = self.depth;
 
-            // alpha - beta pruning
-            if side == Side::White {
-                alpha = alpha.max(eval);
-            } else {
-                beta = beta.min(eval);
-            }
-        
-            undo_move(&mut b, undo);
-            if side == Side::White && eval > best_eval || side == Side::Black && eval < best_eval{
+        // Each root move is searched with the FULL (MIN, MAX) window, so the
+        // searches are independent — no alpha sharing between siblings — and
+        // every returned eval is the move's true minimax value. The shared TT
+        // lets sibling subtrees reuse transpositions they have in common.
+        let results: Vec<(((usize, usize), (usize, usize)), i32)> = moves
+            .par_iter()
+            .map(|&mv| {
+                let mut local = b;                 // Board: Copy — cheap per-task clone
+                let undo = make_move(&mut local, mv.0, mv.1);
+                let eval = minimax(
+                    &mut local,
+                    depth.saturating_sub(1),
+                    1,
+                    i32::MIN, i32::MAX,
+                    &zobrist, &tt,
+                );
+                undo_move(&mut local, undo);        // optional; local is discarded
+                (mv, eval)
+            })
+            .collect();
+
+        // Reduce, preserving the original tie-collection + random pick behaviour.
+        let mut best_eval: i32 = if side == Side::White { i32::MIN } else { i32::MAX };
+        let mut best_moves: Vec<((usize, usize), (usize, usize))> = Vec::new();
+        for (mv, eval) in results {
+            if (side == Side::White && eval > best_eval) || (side == Side::Black && eval < best_eval) {
                 best_eval = eval;
-                best_move = mv;
+                best_moves.clear();
+                best_moves.push(mv);
+            } else if eval == best_eval {
+                best_moves.push(mv);
             }
         }
-        println!("minimax's thinks the evaluation is {}cp", best_eval);
-        best_move
+
+        println!("minimax thinks the evaluation is {}cp", best_eval);
+        best_moves[rand::gen_range(0, best_moves.len())]
     }
 }
 
 fn minimax(board: &mut Board, depth: usize, ply: i32, mut alpha: i32, mut beta: i32,
         ztable: &ZobristTable,
-        tt: &mut FxHashMap<u64, TTEntry>) -> i32 {
+        tt: &TranspositionTable) -> i32 {
     let side = if board.state & WHITE_TO_MOVE != 0 { Side::White } else { Side::Black };
     let hash = ztable.hash(board);
     let alpha_orig = alpha;
     let beta_orig = beta;
 
-    // Only trust an entry searched at least as deep as we need.
-    if let Some(entry) = tt.get(&hash) {
+    // Probe: copy the entry out so the DashMap shard guard is released BEFORE we
+    // recurse. Holding the Ref across the recursive call can stall other threads
+    // on that shard (or deadlock). TTEntry is Copy, so `.map(|e| *e)` is cheap.
+    if let Some(entry) = tt.get(&hash).map(|e| *e) {
+        // Only trust an entry searched at least as deep as we need.
         if entry.depth >= depth {
             match entry.bound {
                 Bound::Exact => return entry.value,
@@ -133,26 +150,16 @@ fn minimax(board: &mut Board, depth: usize, ply: i32, mut alpha: i32, mut beta: 
             }
             if alpha >= beta { return entry.value; }
         }
-    } 
+    }
 
     if depth == 0 {
         return quiescence(board, ply, alpha, beta, ztable, tt);
     }
 
     let mut moves = get_all_moves(board, side);
-    // move ordering
-    // victim value * 10 - attacker value
-    moves.sort_by_key(|mv| {
-        match board[mv.1.0][mv.1.1] {
-            Some(victim) => {
-                let attacker_val = match board[mv.0.0][mv.0.1] {
-                    Some(a) => material_value(a.piece_type),
-                    None => 0,
-                };
-                -(material_value(victim.piece_type) * 10 - attacker_val)
-            }
-            None => 0,
-        }
+    moves.sort_by_key(|mv| match board[mv.1.0][mv.1.1] {
+    Some(p) => -piece_value(p, mv.1, board.moves),
+    None => 0,
     });
 
     // mate check
@@ -203,7 +210,7 @@ fn quiescence(
     mut alpha: i32,
     mut beta: i32,
     ztable: &ZobristTable,
-    tt: &mut FxHashMap<u64, TTEntry>,
+    tt: &TranspositionTable,
 ) -> i32 {
     let side = if board.state & WHITE_TO_MOVE != 0 { Side::White } else { Side::Black };
     let in_check = is_in_check(board, side);
@@ -224,7 +231,7 @@ fn quiescence(
     let mut moves = if in_check {
         get_all_moves(board, side)
     } else {
-        get_all_captures(board, side)  
+        get_all_captures(board, side)
     };
 
     // Mate / stalemate detection when in check with no legal moves
@@ -302,18 +309,6 @@ fn piece_value(piece: Piece, coord: (usize, usize), moves: u8) -> i32{
 
 }
 
-fn material_value(p_type: PieceType) -> i32{
-    match p_type {
-            PieceType::Pawn   => 100,
-            PieceType::Knight => 300,
-            PieceType::Bishop => 300,
-            PieceType::Rook   => 500,
-            PieceType::Queen  => 900,
-            PieceType::King   => 0
-    }
-}
-
-
 fn build_book() -> FxHashMap<String, Vec<((u8, u8), (u8, u8))>>{
     let mut book: FxHashMap<String, Vec<((u8, u8), (u8, u8))>> = FxHashMap::default();
 
@@ -322,11 +317,11 @@ fn build_book() -> FxHashMap<String, Vec<((u8, u8), (u8, u8))>>{
 
     let mut last_fen = String::from("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
     for line in reader.lines() {
-        let line = line.expect("failed to read line"); 
+        let line = line.expect("failed to read line");
         if line.is_empty() || line.starts_with('#'){
             continue;
         }
-        
+
         if line.starts_with('$'){
             let raw = line.replace("$", "");
             let parts: Vec<&str> = raw.split_whitespace().collect();
@@ -476,7 +471,7 @@ const BISHOP_TABLE_LATE: [[i32; 8]; 8] = [
     [  -5,   5,  10,  15,  15,  10,   5,  -5 ],
     [  -5,   5,  10,  10,  10,  10,   5,  -5 ],
     [  -5,   5,   5,   5,   5,   5,   5,  -5 ],
-    [ -10,  -5, -15,  -5,  -5, -15,  -5, -10 ], 
+    [ -10,  -5,  -5,  -5,  -5,  -5,  -5, -10 ], 
 ];
 
 const ROOK_TABLE: [[i32; 8]; 8] = [
@@ -521,7 +516,7 @@ const QUEEN_TABLE_LATE: [[i32; 8]; 8] = [
     [  -5,   0,   5,   5,   5,   5,   0,  -5 ],
     [ -10,   5,   5,   5,   5,   5,   0, -10 ],
     [ -10,   0,   5,   0,   0,   0,   0, -10 ],
-    [ -20, -10, -10, -15,  -5, -10, -10, -20 ], // staring rank
+    [ -20, -10, -10,  -5,  -5, -10, -10, -20 ], // staring rank
 ];
 
 const KING_TABLE_EARLY: [[i32; 8]; 8] = [
