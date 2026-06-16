@@ -5,6 +5,7 @@ use std::fs::File;
 use std::io::{BufRead, BufReader};
 use rayon::prelude::*;
 use dashmap::DashMap;
+use std::time::{Instant};
 use crate::BLACK_SHORT;
 use crate::BLACK_LONG;
 use crate::Board;
@@ -41,6 +42,7 @@ impl MinimaxAI_MT {
 impl Player for MinimaxAI_MT {
     fn as_any(&self) -> &dyn Any { self }
     fn get_move(&self, board: &Board, side: Side) -> ((usize, usize), (usize, usize)) {
+        let start = Instant::now();
 
         // before calculating move manually, check if position exists in our opening book
         let full_fen: String = to_fen(board);
@@ -124,6 +126,7 @@ impl Player for MinimaxAI_MT {
             }
         }
 
+        println!("multi-threaded minimax took {}ms to think", start.elapsed().as_millis());
         println!("minimax thinks the evaluation is {}cp", best_eval);
         best_moves[rand::gen_range(0, best_moves.len())]
     }

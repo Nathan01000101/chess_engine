@@ -3,6 +3,7 @@ use rustc_hash::FxHashMap;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::sync::Mutex;
+use std::time::{Instant};
 use crate::BLACK_SHORT;
 use crate::BLACK_LONG;
 use crate::Board;
@@ -43,9 +44,10 @@ impl MinimaxAI {
 impl Player for MinimaxAI {
     fn as_any(&self) -> &dyn Any { self }
     fn get_move(&self, board: &Board, side: Side) -> ((usize, usize), (usize, usize)) {
+        let start = Instant::now();
 
         // cap transposition table growth
-        if self.tt.lock().unwrap().len() > 20_000_000 {   
+        if self.tt.lock().unwrap().len() > 80_000_000 {   
             self.tt.lock().unwrap().clear();
         }
 
@@ -110,6 +112,7 @@ impl Player for MinimaxAI {
                 best_move = mv;
             }
         }
+        println!("single-threaded minimax took {}ms to think", start.elapsed().as_millis());
         println!("minimax's thinks the evaluation is {}cp", best_eval);
         best_move
     }

@@ -4,18 +4,20 @@ use crate::ai::Player;
 use crate::human::HumanPlayer;
 use crate::random_ai::RandomAI;
 use crate::minimax_ai::MinimaxAI;
+use crate::minimax_ai_mt::MinimaxAI_MT;
 use std::fmt::Write;
 use std::time::Duration;
 use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver};
 use std::ops::{Index, IndexMut};
-use std::thread::{self, current};
+use std::thread::{self};
 use std::env;
 
 mod ai;
 mod human;
 mod random_ai;
 mod minimax_ai;
+mod minimax_ai_mt;
 mod tests;
 
 const WINDOW_SIZE: f32 = 600.0;
@@ -262,17 +264,15 @@ fn piece_type_to_char(piece: PieceType) -> char{
 }
 
 fn piece_to_char(piece: Piece) -> char{
-    let mut c = 'b';
+    let upper_case = piece.color == Side::White;
     match piece.piece_type{
-        PieceType::King => c = 'k',
-        PieceType::Queen => c = 'q',
-        PieceType::Bishop => c = 'b',
-        PieceType::Knight => c = 'n',
-        PieceType::Rook => c = 'r',
-        PieceType::Pawn => c = 'p'
+        PieceType::King     => if upper_case { return 'K'} else {return 'k'},
+        PieceType::Queen    => if upper_case { return 'Q'} else {return 'q'},
+        PieceType::Bishop   => if upper_case { return 'B'} else {return 'b'},
+        PieceType::Knight   => if upper_case { return 'N'} else {return 'n'},
+        PieceType::Rook     => if upper_case { return 'R'} else {return 'r'},
+        PieceType::Pawn     => if upper_case { return 'P'} else {return 'p'}
     }
-    c = if piece.color == Side::White {c.to_ascii_uppercase()} else {c};
-    c
 }
 
 fn in_bounds(x: i16, y: i16) -> bool{
@@ -961,6 +961,7 @@ async fn main() {
         "human"     => Arc::new(HumanPlayer),
         "random"    => Arc::new(RandomAI),
         "minimax"   => Arc::new(MinimaxAI::new(depth)),
+        "minimaxmt"   => Arc::new(MinimaxAI_MT::new(depth)),
         _           => panic!("unknown player type: {white}"),
     };
 
@@ -968,9 +969,11 @@ async fn main() {
         "human"     => Arc::new(HumanPlayer),
         "random"    => Arc::new(RandomAI),
         "minimax"   => Arc::new(MinimaxAI::new(depth)),
+        "minimaxmt"   => Arc::new(MinimaxAI_MT::new(depth)),
         _           => panic!("unknown player type: {black}"),
     };
 
+    let mut current_player = &player1;
     let mut thinking: Option<Receiver<((usize, usize), (usize, usize))>> = None;
 
     // set screen size
@@ -987,6 +990,17 @@ async fn main() {
             thread::sleep(Duration::from_secs_f32(5.0));
             board = new_board();
             game_over = false;
+
+            if winner.is_some(){
+                if winner.unwrap(){
+                    white_wins += 1.0;
+                }else{
+                    black_wins += 1.0;
+                }
+            }else{
+                white_wins += 0.5;
+                black_wins += 0.5;
+            }
             winner = None;
             last_move = None;
         }
@@ -996,230 +1010,138 @@ async fn main() {
             board_flipped = !board_flipped;
         }
 
-        if board.state & WHITE_TO_MOVE != 0{
-            if player1.as_any().is::<HumanPlayer>(){
-                let (x,y) = mouse_position();
+        // manually set draw
+        if macroquad::input::is_key_pressed(KeyCode::D){
+            game_over = true;
+        }
 
-                // get any input
-                if macroquad::input::is_mouse_button_pressed(MouseButton::Left){
-                    let col: usize = if board_flipped{7 - (x / tile_size) as usize}else{(x / tile_size) as usize};
-                    let row: usize = if board_flipped{7 - (y / tile_size) as usize}else{ (y / tile_size) as usize};
+        if current_player.as_any().is::<HumanPlayer>(){
+            let (x,y) = mouse_position();
 
-                    if selected_piece.is_none(){
-                        if board[row][col].is_some(){
-                            selected_piece = board[row][col];
-                            selected_coords = Some((row, col));
-                        }
-                    }else{
-        
-                        if get_valid_moves_standalone(&mut board, selected_coords.unwrap()).contains(&(row, col)) && board[selected_coords.unwrap().0][selected_coords.unwrap().1].unwrap().color == if board.state & WHITE_TO_MOVE != 0 {Side::White} else {Side::Black}{
-                            let move_info: Undo = make_move(&mut board, selected_coords.unwrap(), (row, col));
-                            println!("\nmove {}:", board.moves);
-                            println!("eval: {}",minimax_ai::evaluate(&board));
-                            last_move = Some(((row, col), selected_coords.unwrap()));
+            // get any input
+            if macroquad::input::is_mouse_button_pressed(MouseButton::Left){
+                let col: usize = if board_flipped{7 - (x / tile_size) as usize}else{(x / tile_size) as usize};
+                let row: usize = if board_flipped{7 - (y / tile_size) as usize}else{ (y / tile_size) as usize};
 
-                            if is_in_check(&board, Side::Black){
-                                if get_all_moves(&mut board, Side::Black).len() == 0{
-                                    game_over = true;
-                                    winner = Some(true); // true for white
-                                    white_wins += 1.0;
-                                }
-                                play_sound_once(&move_check); 
-                            }else{
-                                if get_all_moves(&mut board, Side::Black).len() == 0 && get_all_moves(&mut board, Side::White).len() == 0{
-                                    winner = None; // draw
-                                    game_over = true;
-                                    black_wins += 0.5;
-                                    white_wins += 0.5;
-                                }else{ // regular move
-                                    if move_info.captured_piece.is_some(){
-                                        play_sound_once(&move_capture);
-                                    }else{
-                                        // check for castle
-                                        if move_info.moving_piece_before.piece_type == PieceType::King && (move_info.last_move.to.1 as i32 - move_info.last_move.from.1 as i32).abs() == 2{
-                                            play_sound_once(&move_castle);
-                                        }else{
-                                            play_sound_once(&move_normal);
-                                        }
-                                    }
-                                }
-                            }
-
-                            selected_piece = None;
-                            selected_coords = None;
-                        }else{
-                            selected_piece = board[row][col];
-                            selected_coords = Some((row, col));
-                        }
-        
+                if selected_piece.is_none(){
+                    if board[row][col].is_some(){
+                        selected_piece = board[row][col];
+                        selected_coords = Some((row, col));
                     }
-                }
-            }else{
-
-                if thinking.is_none() {
-                    let player = Arc::clone(&player1);
-                    let board_snapshot = board;   
-                    let side = Side::White;
-                    let (tx, rx) = mpsc::channel();
-                    thread::spawn(move || {
-                        let mv = player.get_move(&board_snapshot, side);
-                        let _ = tx.send(mv);
-                    });
-                    thinking = Some(rx);
-                }
-
-                if let Some(rx) = &thinking {
-                    if let Ok(mv) = rx.try_recv() {
-                        let move_info = make_move(&mut board, mv.0, mv.1);
+                }else{
+                    if get_valid_moves_standalone(&mut board, selected_coords.unwrap()).contains(&(row, col)) && board[selected_coords.unwrap().0][selected_coords.unwrap().1].unwrap().color == if board.state & WHITE_TO_MOVE != 0 {Side::White} else {Side::Black}{
+                        let move_info: Undo = make_move(&mut board, selected_coords.unwrap(), (row, col));
                         println!("\nmove {}:", board.moves);
                         println!("eval: {}",minimax_ai::evaluate(&board));
-                        last_move = Some(mv);
-                        if is_in_check(&board, Side::Black){
-                            if get_all_moves(&mut board, Side::Black).len() == 0{
+                        last_move = Some(((row, col), selected_coords.unwrap()));
+
+                        let is_white = Arc::ptr_eq(&current_player, &player1); 
+                        let opposite_side = if is_white {Side::Black} else {Side::White};
+
+                        if get_all_moves(&mut board, opposite_side).len() == 0{ 
+                            if is_in_check(&board, opposite_side){ // checkmate
                                 game_over = true;
-                                play_sound_once(&game_finished);
-                                winner = Some(true); // true for white
-                                white_wins += 1.0;
+                                winner = Some(is_white); // true if white, false if black
+                                play_sound_once(&move_check); 
+                            }else{ // draw
+                                game_over = true;
                             }
-                            play_sound_once(&move_check); 
-                        }else{
-                            if get_all_moves(&mut board, Side::Black).len() == 0 && get_all_moves(&mut board, Side::White).len() == 0{
-                                winner = None; // draw
-                                game_over = true;
-                                play_sound_once(&game_finished);
-                                black_wins += 0.5;
-                                white_wins += 0.5;
-                            }else{ // regular move
-                                if move_info.captured_piece.is_some(){
-                                    play_sound_once(&move_capture);
+                            play_sound_once(&game_finished);       
+                        }
+                        else{
+                            if move_info.captured_piece.is_some(){
+                                play_sound_once(&move_capture);
+                            }else if is_in_check(&board, opposite_side){
+                                play_sound_once(&move_check);
+                            }else{
+                                // check for castle
+                                if move_info.moving_piece_before.piece_type == PieceType::King && (move_info.last_move.to.1 as i32 - move_info.last_move.from.1 as i32).abs() == 2{
+                                    play_sound_once(&move_castle);
                                 }else{
-                                    // check for castle
-                                    if move_info.moving_piece_before.piece_type == PieceType::King && (move_info.last_move.to.1 as i32 - move_info.last_move.from.1 as i32).abs() == 2{
-                                        play_sound_once(&move_castle);
-                                    }else{
-                                        play_sound_once(&move_normal);
-                                    }
+                                    play_sound_once(&move_normal);
                                 }
                             }
                         }
+                        
 
-                        thinking = None;
+                        //switch turns
+                        if is_white{
+                            current_player = &player2;
+                        }else{
+                            current_player = &player1;
+                        }
+
+                        selected_piece = None;
+                        selected_coords = None;
+                    }else{
+                        selected_piece = board[row][col];
+                        selected_coords = Some((row, col));
                     }
+    
                 }
             }
-        }else{
-            if player2.as_any().is::<HumanPlayer>(){
-                let (x,y) = mouse_position();
+        }else{ // AI
 
-                // get any input
-                if macroquad::input::is_mouse_button_pressed(MouseButton::Left){
-                    let col: usize = if board_flipped{7 - (x / tile_size) as usize}else{(x / tile_size) as usize};
-                    let row: usize = if board_flipped{7 - (y / tile_size) as usize}else{ (y / tile_size) as usize};
-        
-                    if selected_piece.is_none(){
-                        if board[row][col].is_some(){
-                            selected_piece = board[row][col];
-                            selected_coords = Some((row, col));
-                        }
-                    }else{
-        
-                        if get_valid_moves_standalone(&mut board, selected_coords.unwrap()).contains(&(row, col)) && board[selected_coords.unwrap().0][selected_coords.unwrap().1].unwrap().color == if board.state & WHITE_TO_MOVE != 0 {Side::White} else {Side::Black}{
-                            let move_info= make_move(&mut board, selected_coords.unwrap(), (row, col));
-                            println!("\nmove {}:", board.moves);
-                            println!("eval: {}",minimax_ai::evaluate(&board));
-                            last_move = Some(((row, col), selected_coords.unwrap()));
+            if thinking.is_none() {
+                let player = Arc::clone(&current_player);
+                let board_snapshot = board;   
+                let side = if Arc::ptr_eq(&current_player, &player1) {Side::White} else {Side::Black};
+                let (tx, rx) = mpsc::channel();
+                thread::spawn(move || {
+                    let mv = player.get_move(&board_snapshot, side);
+                    let _ = tx.send(mv);
+                });
+                thinking = Some(rx);
+            }
 
-                            if is_in_check(&board, Side::White){
-                                if get_all_moves(&mut board, Side::White).len() == 0{
-                                    game_over = true;
-                                    play_sound_once(&game_finished);
-                                    winner = Some(false); // true for white
-                                    black_wins += 1.0;
-                                }
-                                play_sound_once(&move_check); 
-                            }else{
-                                if get_all_moves(&mut board, Side::Black).len() == 0 && get_all_moves(&mut board, Side::White).len() == 0{
-                                    winner = None; // draw
-                                    game_over = true;
-                                    play_sound_once(&game_finished);
-                                    black_wins += 0.5;
-                                    white_wins += 0.5;
-                                }else{ // regular move
-                                    if move_info.captured_piece.is_some(){
-                                        play_sound_once(&move_capture);
-                                    }else{
-                                        // check for castle
-                                        if move_info.moving_piece_before.piece_type == PieceType::King && (move_info.last_move.to.1 as i32 - move_info.last_move.from.1 as i32).abs() == 2{
-                                            play_sound_once(&move_castle);
-                                        }else{
-                                            play_sound_once(&move_normal);
-                                        }
-                                    }
-                                }
-                            }   
-                            selected_piece = None;
-                            selected_coords = None;
-                        }else{
-                            selected_piece = board[row][col];
-                            selected_coords = Some((row, col));
-                        }
-        
-                    }
-                }
-            }else{
+            if let Some(rx) = &thinking {
+                if let Ok(mv) = rx.try_recv() {
+                    let move_info = make_move(&mut board, mv.0, mv.1);
+                    println!("move {}:", board.moves);
+                    println!("eval: {}\n",minimax_ai::evaluate(&board));
+                    last_move = Some(mv);
 
-                if thinking.is_none() {
-                    let player = Arc::clone(&player2);
-                    let board_snapshot = board;   
-                    let side = Side::Black;
-                    let (tx, rx) = mpsc::channel();
-                    thread::spawn(move || {
-                        let mv = player.get_move(&board_snapshot, side);
-                        let _ = tx.send(mv);
-                    });
-                    thinking = Some(rx);
-                }
+                    let is_white = Arc::ptr_eq(&current_player, &player1); 
+                    let opposite_side = if is_white {Side::Black} else {Side::White};
 
-                if let Some(rx) = &thinking {
-                    if let Ok(mv) = rx.try_recv() {
-                        let move_info = make_move(&mut board, mv.0, mv.1);
-                        println!("\nmove {}:", board.moves);
-                        println!("eval: {}",minimax_ai::evaluate(&board));
-                        last_move = Some(mv);
-
-                        if is_in_check(&board, Side::White){
-                            if get_all_moves(&mut board, Side::White).len() == 0{
-                                game_over = true;
-                                play_sound_once(&game_finished);
-                                winner = Some(false); // true for white
-                                black_wins += 1.0;
-                            }
+                    if get_all_moves(&mut board, opposite_side).len() == 0{ 
+                        if is_in_check(&board, opposite_side){ // checkmate
+                            game_over = true;
+                            winner = Some(is_white); // true if white, false if black
                             play_sound_once(&move_check); 
-                        }else{
-                            if get_all_moves(&mut board, Side::Black).len() == 0 && get_all_moves(&mut board, Side::White).len() == 0{
-                                winner = None; // draw
-                                game_over = true;
-                                play_sound_once(&game_finished);
-                                black_wins += 0.5;
-                                white_wins += 0.5;
-                            }else{ // regular move
-                                if move_info.captured_piece.is_some(){
-                                    play_sound_once(&move_capture);
-                                }else{
-                                    // check for castle
-                                    if move_info.moving_piece_before.piece_type == PieceType::King && (move_info.last_move.to.1 as i32 - move_info.last_move.from.1 as i32).abs() == 2{
-                                        play_sound_once(&move_castle);
-                                    }else{
-                                        play_sound_once(&move_normal);
-                                    }
-                                }
-                            }
-                        }   
-                        thinking = None;
+                        }else{ // draw
+                            game_over = true;
+                        }
+                        play_sound_once(&game_finished);       
                     }
+                    else{
+                        if move_info.captured_piece.is_some(){
+                            play_sound_once(&move_capture);
+                        }else if is_in_check(&board, opposite_side){
+                            play_sound_once(&move_check);
+                        }else{
+                            // check for castle
+                            if move_info.moving_piece_before.piece_type == PieceType::King && (move_info.last_move.to.1 as i32 - move_info.last_move.from.1 as i32).abs() == 2{
+                                play_sound_once(&move_castle);
+                            }else{
+                                play_sound_once(&move_normal);
+                            }
+                        }
+                        
+                    }
+                    
+                    //switch turns
+                    if is_white{
+                        current_player = &player2;
+                    }else{
+                        current_player = &player1;
+                    }
+
+                    thinking = None;
                 }
             }
         }
+        
 
         
 
