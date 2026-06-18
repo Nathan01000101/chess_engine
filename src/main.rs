@@ -989,6 +989,7 @@ async fn main() {
         if game_over{
             thread::sleep(Duration::from_secs_f32(5.0));
             board = new_board();
+            current_player = &player1;
             game_over = false;
 
             if winner.is_some(){
@@ -1051,8 +1052,6 @@ async fn main() {
                         else{
                             if move_info.captured_piece.is_some(){
                                 play_sound_once(&move_capture);
-                            }else if is_in_check(&board, opposite_side){
-                                play_sound_once(&move_check);
                             }else{
                                 // check for castle
                                 if move_info.moving_piece_before.piece_type == PieceType::King && (move_info.last_move.to.1 as i32 - move_info.last_move.from.1 as i32).abs() == 2{
@@ -1061,8 +1060,10 @@ async fn main() {
                                     play_sound_once(&move_normal);
                                 }
                             }
+                            if is_in_check(&board, opposite_side){
+                                play_sound_once(&move_check);
+                            }
                         }
-                        
 
                         //switch turns
                         if is_white{
@@ -1113,12 +1114,9 @@ async fn main() {
                             game_over = true;
                         }
                         play_sound_once(&game_finished);       
-                    }
-                    else{
+                    }else{
                         if move_info.captured_piece.is_some(){
                             play_sound_once(&move_capture);
-                        }else if is_in_check(&board, opposite_side){
-                            play_sound_once(&move_check);
                         }else{
                             // check for castle
                             if move_info.moving_piece_before.piece_type == PieceType::King && (move_info.last_move.to.1 as i32 - move_info.last_move.from.1 as i32).abs() == 2{
@@ -1127,7 +1125,9 @@ async fn main() {
                                 play_sound_once(&move_normal);
                             }
                         }
-                        
+                        if is_in_check(&board, opposite_side){
+                            play_sound_once(&move_check);
+                        }
                     }
                     
                     //switch turns
